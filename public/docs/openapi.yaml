@@ -1,0 +1,5285 @@
+openapi: 3.1.0
+info:
+  title: MandalHishob API Reference
+  version: 2.1.0
+  summary: Production-ready RESTful & Real-time Backend API Specification for MandalHishob ERP
+  description: |
+    
+    # 🕉️ MandalHishob API Reference & Integration Guide
+    
+    Welcome to the **MandalHishob API Reference**. MandalHishob is a high-performance financial management and ERP platform built specifically for festival mandals (उत्सव मंडळ) such as Ganeshotsav, Navratri, and Shivjayanti.
+    
+    ---
+    
+    ### 🚀 Key Architectural Capabilities
+    
+    1. **Multi-Tenant Scoping**: All operations are scoped by Mandal (`mandalId` / `X-Mandal-Id`) and Festival (`festivalId` / `X-Festival-Id`).
+    2. **Dual-Signoff Cryptographic Locking**: The final accounts (*Final Hisab*) require dual digital signatures (Mandal President and Treasurer) before freezing financial writes permanently.
+    3. **Double-Entry & Immutability**: No monetary record is ever hard-deleted. Vargani receipts can only be voided/cancelled with audit reasons.
+    4. **Offline Sync & Idempotency**: Mobile collectors operate offline seamlessly. Sync mutations are guaranteed conflict-free via UUID `Idempotency-Key` headers and vector timestamps.
+    5. **Real-Time WebSockets & SSE**: Live collection feeds, expense alerts, and cash handover approvals stream in real-time.
+    
+    ---
+    
+    ### 🔐 Authentication Flow
+    
+    1. Authenticate via `POST /api/v1/auth/login` with phone number/email and password.
+    2. Obtain `accessToken` (lifetime: 30 minutes) and `refreshToken` (lifetime: 30 days).
+    3. Include the JWT token in all authenticated requests:
+       ```http
+       Authorization: Bearer <accessToken>
+       X-Mandal-Id: mnd_shree_ganesh_2026
+       X-Festival-Id: fst_ganeshotsav_2026
+       ```
+    4. When the access token expires (`401 TOKEN_EXPIRED`), exchange the refresh token via `POST /api/v1/auth/token/refresh`.
+    
+    ---
+    
+    ### 👥 Role-Based Access Control (RBAC) & User Types Matrix
+    
+    The API enforces strict multi-tenant Role-Based Access Control (RBAC). A user's role in a specific Mandal determines their authorized actions:
+    
+    | Module / Action | SUPER_ADMIN | ADMIN | TREASURER | COLLECTOR | MEMBER |
+    |---|:---:|:---:|:---:|:---:|:---:|
+    | **Create Mandal / Onboarding** | ✅ Full | ✅ Full | ❌ | ❌ | ❌ |
+    | **Update Mandal / Festival Settings** | ✅ Full | ✅ Full | ✏️ Budget only | 👁️ View | 👁️ View |
+    | **Issue Vargani Receipts** | ✅ Full | ✅ Full | ✅ Full | ✅ Full | ❌ |
+    | **Cancel / Void Vargani** | ✅ Full | ✅ Full | ✅ Full | 🔒 Own receipts only | ❌ |
+    | **Receipt Book Allocate / Status** | ✅ Full | ✅ Full | ✅ Full | 👁️ Own books view | ❌ |
+    | **Expenses & Bill Attachments** | ✅ Full | ✅ Full | ✅ Full | ❌ | ❌ |
+    | **Initiate Cash Handover** | ✅ Full | ✅ Full | ✅ Full | ✅ Initiate | ❌ |
+    | **Verify Cash Handover** | ✅ Full | ❌ | ⭐ **Exclusive** | ❌ | ❌ |
+    | **Bank Accounts & Fund Transfers** | ✅ Full | ✅ Full | ✅ Full | ❌ | ❌ |
+    | **Member Invites & Management** | ✅ Full | ✅ Full | 👁️ View | 👁️ View | 👁️ View |
+    | **Dual Sign Final Hisab** | ✅ Full | ✍️ President Sign | ✍️ Treasurer Sign | ❌ | ❌ |
+    | **Export Reports (PDF / Excel)** | ✅ Full | ✅ Full | ✅ Full | 🔒 Own summary | ❌ |
+    
+    ---
+    
+    ### 🛡️ Standard Response Wrappers
+    
+    #### Success Envelope (`200 OK`, `201 Created`):
+    ```json
+    {
+      "success": true,
+      "statusCode": 200,
+      "message": "Operation completed successfully",
+      "data": { ... },
+      "meta": {
+        "page": 1,
+        "limit": 20,
+        "totalRecords": 120,
+        "totalPages": 6,
+        "timestamp": "2026-08-09T16:15:00.000Z"
+      }
+    }
+    ```
+    
+    #### Error Envelope:
+    ```json
+    {
+      "success": false,
+      "statusCode": 422,
+      "error": {
+        "code": "VALIDATION_FAILED",
+        "message": "Invalid input data provided",
+        "details": [
+          {
+            "field": "phone",
+            "issue": "Phone number must be a valid 10-digit Indian mobile number"
+          }
+        ]
+      },
+      "timestamp": "2026-08-09T16:15:00.000Z"
+    }
+    ```
+        
+  contact:
+    name: MandalHishob Developer Support
+    email: support@mandalhisab.in
+    url: "https://mandalhisab.in"
+servers:
+  - url: "https://api.mandalhisab.in/api/v1"
+    description: Production API Server (AWS Mumbai)
+  - url: "http://localhost:8000/api/v1"
+    description: Local Development Server
+tags:
+  - name: Authentication & Profile
+    description: JWT Authentication, token rotation, profile settings, and 4-digit security PIN
+  - name: Mandal & Festival Management
+    description: Mandal entity management and festival lifecycle tracking
+  - name: Dashboard & Analytics
+    description: High-level financial summaries, targets, charts, and metrics
+  - name: Vargani (Collection Receipts)
+    description: Collection receipt issuance, cancellation, signature uploads, and PDFs
+  - name: Receipt Book Allocation
+    description: Physical receipt book tracking, leaf ranges, and collector distribution
+  - name: Expense Management
+    description: Vendor bills, expense vouchers, receipt uploads, and payments
+  - name: Funds & Treasury
+    description: Cash handovers, treasurer verification, bank accounts, fund transfers, and Money Trail
+  - name: Mandal Members & Roles
+    description: Member directory, RBAC role assignment, financial summaries, and access management
+  - name: Reports & Final Hisab
+    description: Financial reports, PDF/Excel generation, and President + Treasurer digital sign-off
+  - name: App Config & Public
+    description: Public app configuration, feature flags, and public receipt lookup
+  - name: Devices & Notifications
+    description: FCM push token registration and in-app notifications feed
+  - name: Offline Sync & Real-time
+    description: Offline mutation queue synchronization, delta pull, and SSE event streaming
+paths:
+  "/auth/register":
+    post:
+      tags:
+        - Authentication & Profile
+      summary: Register new user & initialize default Mandal
+      description: Creates a new user profile, creates their initial mandal, and returns JWT access + refresh tokens.
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - fullName
+                - phone
+                - password
+                - mandalName
+                - address
+                - city
+                - pincode
+              properties:
+                fullName:
+                  type: string
+                  example: Sagar Patil
+                phone:
+                  type: string
+                  example: 9876543210
+                email:
+                  type: string
+                  format: email
+                  example: sagar@example.com
+                password:
+                  type: string
+                  format: password
+                  example: StrongPass@123
+                mandalName:
+                  type: string
+                  example: Shree Ganesh Utsav Mandal
+                registrationNumber:
+                  type: string
+                  example: MAH/1234/2010
+                establishedYear:
+                  type: integer
+                  example: 2010
+                address:
+                  type: string
+                  example: Shivaji Chowk, Main Road
+                city:
+                  type: string
+                  example: Pune
+                pincode:
+                  type: string
+                  example: 411001
+                wardNumber:
+                  type: string
+                  example: Ward 12
+                defaultLanguage:
+                  type: string
+                  enum:
+                    - en
+                    - mr
+                  example: mr
+      responses:
+        201:
+          description: User successfully registered
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      user:
+                        $ref: "#/components/schemas/User"
+                      mandal:
+                        $ref: "#/components/schemas/Mandal"
+                      tokens:
+                        $ref: "#/components/schemas/AuthTokens"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+        422:
+          description: Phone number already registered or invalid fields
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                statusCode: 422
+                error:
+                  code: VALIDATION_FAILED
+                  message: Phone number already registered or invalid fields
+                timestamp: "2026-08-09T16:15:00.000Z"
+  "/auth/login":
+    post:
+      tags:
+        - Authentication & Profile
+      summary: Authenticate user and get JWT tokens
+      description: Log in with phone number or username and password.
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - login
+                - password
+              properties:
+                login:
+                  type: string
+                  description: Phone number or username
+                  example: 9876543210
+                password:
+                  type: string
+                  format: password
+                  example: StrongPass@123
+      responses:
+        200:
+          description: Login successful
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      user:
+                        $ref: "#/components/schemas/User"
+                      defaultMandalId:
+                        type: string
+                        example: mnd_shree_ganesh_2026
+                      tokens:
+                        $ref: "#/components/schemas/AuthTokens"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+        401:
+          description: Invalid phone number or password
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                statusCode: 401
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: Invalid phone number or password
+                timestamp: "2026-08-09T16:15:00.000Z"
+  "/auth/token/refresh":
+    post:
+      tags:
+        - Authentication & Profile
+      summary: Refresh expired access token
+      description: Rotates the refresh token and returns a new access token.
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - refreshToken
+              properties:
+                refreshToken:
+                  type: string
+                  example: rft_a1b2c3d4e5f6g7h8
+      responses:
+        200:
+          description: Token refreshed successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/AuthTokens"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+        401:
+          description: The provided refresh token is expired or revoked
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                statusCode: 401
+                error:
+                  code: REFRESH_TOKEN_EXPIRED
+                  message: The provided refresh token is expired or revoked
+                timestamp: "2026-08-09T16:15:00.000Z"
+  "/auth/logout":
+    post:
+      tags:
+        - Authentication & Profile
+      summary: Logout user and revoke refresh token
+      description: Invalidates the current refresh token and active session.
+      operationId: logoutUser
+      security:
+        - BearerAuth:[]
+      responses:
+        200:
+          description: Logged out successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      loggedOut:
+                        type: boolean
+                        example: true
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/auth/me":
+    get:
+      tags:
+        - Authentication & Profile
+      summary: Get current user profile
+      description: Returns the authenticated user details, default mandal, and active festival context.
+      operationId: getMe
+      security:
+        - BearerAuth:[]
+      responses:
+        200:
+          description: User profile retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/User"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    put:
+      tags:
+        - Authentication & Profile
+      summary: Update current user profile
+      description: Updates user display name, email, avatar image, language preference, and active festival selection.
+      operationId: updateMe
+      security:
+        - BearerAuth:[]
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              properties:
+                fullName:
+                  type: string
+                  example: Sagar Patil
+                email:
+                  type: string
+                  format: email
+                  example: sagar.patil@example.com
+                avatarUrl:
+                  type: string
+                  example: "https://storage.mandalhisab.in/avatars/usr_998877.jpg"
+                defaultLanguage:
+                  type: string
+                  enum:
+                    - en
+                    - mr
+                  example: mr
+                activeFestivalId:
+                  type: string
+                  example: fst_ganeshotsav_2026
+      responses:
+        200:
+          description: Profile updated successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/User"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/auth/security-pin":
+    put:
+      tags:
+        - Authentication & Profile
+      summary: Set or update 4-digit security PIN
+      description: Sets or updates the 4-digit PIN used for treasury verification and high-security actions.
+      operationId: setSecurityPin
+      security:
+        - BearerAuth:[]
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - pin
+              properties:
+                currentPin:
+                  type: string
+                  description: Required if PIN is already set
+                  example: 1234
+                pin:
+                  type: string
+                  minLength: 4
+                  maxLength: 4
+                  example: 9876
+      responses:
+        200:
+          description: Security PIN updated successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      isPinSet:
+                        type: boolean
+                        example: true
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+        422:
+          description: PIN must be exactly 4 numeric digits
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                statusCode: 422
+                error:
+                  code: INVALID_PIN
+                  message: PIN must be exactly 4 numeric digits
+                timestamp: "2026-08-09T16:15:00.000Z"
+  "/auth/password":
+    put:
+      tags:
+        - Authentication & Profile
+      summary: Change account password
+      description: Updates user account password.
+      operationId: changePassword
+      security:
+        - BearerAuth:[]
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - currentPassword
+                - newPassword
+              properties:
+                currentPassword:
+                  type: string
+                  format: password
+                  example: OldPass@123
+                newPassword:
+                  type: string
+                  format: password
+                  example: NewStrongPass@456
+      responses:
+        200:
+          description: Password changed successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      changed:
+                        type: boolean
+                        example: true
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/auth/forgot-password":
+    post:
+      tags:
+        - Authentication & Profile
+      summary: Request password reset OTP
+      operationId: forgotPassword
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - phone
+              properties:
+                phone:
+                  type: string
+                  example: 9876543210
+      responses:
+        200:
+          description: OTP sent successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      otpExpirySeconds:
+                        type: integer
+                        example: 300
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/auth/reset-password":
+    post:
+      tags:
+        - Authentication & Profile
+      summary: Reset password with OTP
+      operationId: resetPassword
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - phone
+                - otp
+                - newPassword
+              properties:
+                phone:
+                  type: string
+                  example: 9876543210
+                otp:
+                  type: string
+                  example: 123456
+                newPassword:
+                  type: string
+                  format: password
+                  example: NewStrongPass@789
+      responses:
+        200:
+          description: Password reset successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      reset:
+                        type: boolean
+                        example: true
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/mandals":
+    get:
+      tags:
+        - Mandal & Festival Management
+      summary: List mandals user belongs to
+      operationId: listMandals
+      security:
+        - BearerAuth:[]
+      responses:
+        200:
+          description: Mandals retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Mandal"
+                  meta:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                        example: 1
+                      limit:
+                        type: integer
+                        example: 20
+                      totalRecords:
+                        type: integer
+                        example: 45
+                      totalPages:
+                        type: integer
+                        example: 3
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    post:
+      tags:
+        - Mandal & Festival Management
+      summary: Create new Mandal
+      description: Creates a new Mandal entity and assigns the creator as ADMIN.
+      operationId: createMandal
+      security:
+        - BearerAuth:[]
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - name
+                - address
+                - city
+                - pincode
+                - contactNumber
+              properties:
+                name:
+                  type: string
+                  example: Navrashtra Yuvak Mandal
+                registrationNumber:
+                  type: string
+                  example: MAH/5678/2015
+                establishedYear:
+                  type: integer
+                  example: 2015
+                address:
+                  type: string
+                  example: Sector 4, Gandhinagar
+                city:
+                  type: string
+                  example: Kolhapur
+                pincode:
+                  type: string
+                  example: 416001
+                wardNumber:
+                  type: string
+                  example: Ward 4
+                contactNumber:
+                  type: string
+                  example: 9822334455
+                upiId:
+                  type: string
+                  example: navrashtra@upi
+      responses:
+        201:
+          description: Mandal created successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/Mandal"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/mandals/{mandal}":
+    get:
+      tags:
+        - Mandal & Festival Management
+      summary: Get Mandal details
+      operationId: getMandal
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: mandal
+          in: path
+          required: true
+          schema:
+            type: string
+          example: mnd_shree_ganesh_2026
+      responses:
+        200:
+          description: Mandal details retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/Mandal"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+        404:
+          description: Mandal not found
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                statusCode: 404
+                error:
+                  code: MANDAL_NOT_FOUND
+                  message: Mandal not found
+                timestamp: "2026-08-09T16:15:00.000Z"
+    put:
+      tags:
+        - Mandal & Festival Management
+      summary: Update Mandal details
+      operationId: updateMandal
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: mandal
+          in: path
+          required: true
+          schema:
+            type: string
+          example: mnd_shree_ganesh_2026
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: Shree Ganesh Utsav Mandal
+                address:
+                  type: string
+                  example: Shivaji Chowk, Main Road
+                city:
+                  type: string
+                  example: Pune
+                pincode:
+                  type: string
+                  example: 411001
+                contactNumber:
+                  type: string
+                  example: 9876543210
+                upiId:
+                  type: string
+                  example: shreeganesh@upi
+                logoUrl:
+                  type: string
+                  example: "https://storage.mandalhisab.in/logos/mnd_1.png"
+      responses:
+        200:
+          description: Mandal updated successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/Mandal"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/mandals/{mandal}/festivals":
+    get:
+      tags:
+        - Mandal & Festival Management
+      summary: List festivals under a Mandal
+      operationId: listFestivals
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: mandal
+          in: path
+          required: true
+          schema:
+            type: string
+          example: mnd_shree_ganesh_2026
+      responses:
+        200:
+          description: Festivals retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Festival"
+                  meta:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                        example: 1
+                      limit:
+                        type: integer
+                        example: 20
+                      totalRecords:
+                        type: integer
+                        example: 45
+                      totalPages:
+                        type: integer
+                        example: 3
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    post:
+      tags:
+        - Mandal & Festival Management
+      summary: Create festival under Mandal
+      operationId: createFestival
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: mandal
+          in: path
+          required: true
+          schema:
+            type: string
+          example: mnd_shree_ganesh_2026
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - name
+                - startDate
+                - endDate
+              properties:
+                name:
+                  type: string
+                  example: Ganeshotsav 2026
+                startDate:
+                  type: string
+                  format: date
+                  example: 2026-08-15
+                endDate:
+                  type: string
+                  format: date
+                  example: 2026-08-25
+                targetCollection:
+                  type: number
+                  example: 500000
+                budgetLimit:
+                  type: number
+                  example: 450000
+      responses:
+        201:
+          description: Festival created successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/Festival"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}":
+    get:
+      tags:
+        - Mandal & Festival Management
+      summary: Get festival details
+      operationId: getFestival
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+          example: fst_ganeshotsav_2026
+      responses:
+        200:
+          description: Festival details retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/Festival"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    put:
+      tags:
+        - Mandal & Festival Management
+      summary: Update festival & budget targets
+      operationId: updateFestival
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+          example: fst_ganeshotsav_2026
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: Ganeshotsav 2026
+                startDate:
+                  type: string
+                  format: date
+                  example: 2026-08-15
+                endDate:
+                  type: string
+                  format: date
+                  example: 2026-08-25
+                status:
+                  type: string
+                  enum:
+                    - ACTIVE
+                    - UPCOMING
+                    - COMPLETED
+                  example: ACTIVE
+                targetCollection:
+                  type: number
+                  example: 600000
+                budgetLimit:
+                  type: number
+                  example: 500000
+      responses:
+        200:
+          description: Festival updated successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/Festival"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/dashboard/summary":
+    get:
+      tags:
+        - Dashboard & Analytics
+      summary: Get festival financial summary & analytics
+      description: "Returns aggregated financial metrics: total collection, total expenses, net balance, target completion %, payment mode breakdown, and top collector rankings."
+      operationId: getDashboardSummary
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+          example: fst_ganeshotsav_2026
+      responses:
+        200:
+          description: Dashboard metrics calculated
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      totalCollected:
+                        type: number
+                        example: 522501
+                      totalExpenses:
+                        type: number
+                        example: 345000
+                      netBalance:
+                        type: number
+                        example: 177501
+                      targetCollection:
+                        type: number
+                        example: 500000
+                      budgetLimit:
+                        type: number
+                        example: 450000
+                      targetProgressPercentage:
+                        type: number
+                        example: 104.5
+                      budgetUtilizedPercentage:
+                        type: number
+                        example: 76.6
+                      paymentModes:
+                        type: object
+                        properties:
+                          cash:
+                            type: number
+                            example: 320000
+                          upi:
+                            type: number
+                            example: 180000
+                          cheque:
+                            type: number
+                            example: 22501
+                          netBanking:
+                            type: number
+                            example: 0
+                      topCollectors:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            collectorId:
+                              type: string
+                              example: usr_998877
+                            name:
+                              type: string
+                              example: Sagar Patil
+                            totalAmount:
+                              type: number
+                              example: 125000
+                            receiptCount:
+                              type: integer
+                              example: 45
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/vargani":
+    get:
+      tags:
+        - Vargani (Collection Receipts)
+      summary: List collection receipts
+      description: Returns paginated list of vargani receipts. Supports filtering by date range, payment mode, collector, and donor search term.
+      operationId: listVargani
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+          example: fst_ganeshotsav_2026
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Donor name or receipt number
+        - name: paymentMode
+          in: query
+          schema:
+            type: string
+            enum:
+              - CASH
+              - UPI
+              - CHEQUE
+              - NET_BANKING
+        - name: collectorId
+          in: query
+          schema:
+            type: string
+        - name: fromDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: toDate
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        200:
+          description: Receipts retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/VarganiEntry"
+                  meta:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                        example: 1
+                      limit:
+                        type: integer
+                        example: 20
+                      totalRecords:
+                        type: integer
+                        example: 45
+                      totalPages:
+                        type: integer
+                        example: 3
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    post:
+      tags:
+        - Vargani (Collection Receipts)
+      summary: Issue new Vargani collection receipt
+      description: Issues a digital receipt or enters a physical receipt book leaf. Blocked once Final Hisab is locked.
+      operationId: createVargani
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+          example: fst_ganeshotsav_2026
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - donorName
+                - amount
+                - paymentMode
+                - receiptType
+              properties:
+                donorName:
+                  type: string
+                  example: Sunil Gaikwad
+                donorPhone:
+                  type: string
+                  example: 9822012345
+                donorAddress:
+                  type: string
+                  example: Flat 4, Shanti Heights, Pune
+                amount:
+                  type: number
+                  example: 2501
+                paymentMode:
+                  type: string
+                  enum:
+                    - CASH
+                    - UPI
+                    - CHEQUE
+                    - NET_BANKING
+                  example: UPI
+                receiptType:
+                  type: string
+                  enum:
+                    - DIGITAL
+                    - PHYSICAL_BOOK
+                  example: DIGITAL
+                receiptBookId:
+                  type: string
+                  description: Required if PHYSICAL_BOOK
+                  example: bk_001
+                receiptBookLeafNumber:
+                  type: integer
+                  description: Required if PHYSICAL_BOOK
+                  example: 1024
+                upiTransactionId:
+                  type: string
+                  example: UPI20260809123456
+                chequeNumber:
+                  type: string
+                  example: CHK-554433
+                bankName:
+                  type: string
+                  example: HDFC Bank
+                signatureBase64:
+                  type: string
+                  description: Optional PNG Base64 signature
+      responses:
+        201:
+          description: Vargani receipt issued
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/VarganiEntry"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+        409:
+          description: Festival accounts are finalized and locked against changes
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                statusCode: 409
+                error:
+                  code: HISAB_LOCKED
+                  message: Festival accounts are finalized and locked against changes
+                timestamp: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/vargani/export":
+    get:
+      tags:
+        - Vargani (Collection Receipts)
+      summary: Export Vargani receipts (XLSX / CSV)
+      operationId: exportVargani
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+          example: fst_ganeshotsav_2026
+        - name: format
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - xlsx
+              - csv
+          example: xlsx
+      responses:
+        200:
+          description: Export file binary stream
+          content:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+              schema:
+                type: string
+                format: binary
+            "text/csv":
+              schema:
+                type: string
+  "/festivals/{festival}/vargani/{vargani}":
+    get:
+      tags:
+        - Vargani (Collection Receipts)
+      summary: Get Vargani receipt details
+      operationId: getVargani
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: vargani
+          in: path
+          required: true
+          schema:
+            type: string
+          example: vrg_102
+      responses:
+        200:
+          description: Receipt retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/VarganiEntry"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+        404:
+          description: Vargani receipt not found
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                statusCode: 404
+                error:
+                  code: RECEIPT_NOT_FOUND
+                  message: Vargani receipt not found
+                timestamp: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/vargani/{vargani}/cancel":
+    post:
+      tags:
+        - Vargani (Collection Receipts)
+      summary: Cancel / Void Vargani receipt
+      description: Marks receipt as cancelled with an audit reason. Decrements collection totals.
+      operationId: cancelVargani
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: vargani
+          in: path
+          required: true
+          schema:
+            type: string
+          example: vrg_102
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  example: Donor entered wrong amount in check
+      responses:
+        200:
+          description: Receipt cancelled successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/VarganiEntry"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/vargani/{vargani}/signature":
+    post:
+      tags:
+        - Vargani (Collection Receipts)
+      summary: Upload donor signature image
+      operationId: uploadVarganiSignature
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: vargani
+          in: path
+          required: true
+          schema:
+            type: string
+          example: vrg_102
+      requestBody:
+        required: true
+        content:
+          "multipart/form-data":
+            schema:
+              type: object
+              required:
+                - signature
+              properties:
+                signature:
+                  type: string
+                  format: binary
+                  description: PNG/JPEG signature image
+      responses:
+        200:
+          description: Signature attached
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      signatureUrl:
+                        type: string
+                        example: "https://storage.mandalhisab.in/signatures/vrg_102.png"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/vargani/{vargani}/pdf":
+    get:
+      tags:
+        - Vargani (Collection Receipts)
+      summary: Download branded receipt PDF
+      operationId: downloadVarganiPdf
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: vargani
+          in: path
+          required: true
+          schema:
+            type: string
+          example: vrg_102
+      responses:
+        200:
+          description: Receipt PDF binary file
+          content:
+            "application/pdf":
+              schema:
+                type: string
+                format: binary
+  "/public/receipts/{receiptNumber}":
+    get:
+      tags:
+        - App Config & Public
+      summary: Public receipt lookup (No auth required)
+      description: Enables donors scanning receipt QR code to verify receipt authenticity and view digital copy.
+      operationId: publicReceiptLookup
+      parameters:
+        - name: receiptNumber
+          in: path
+          required: true
+          schema:
+            type: string
+          example: 1246
+      responses:
+        200:
+          description: Receipt verified
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/VarganiEntry"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+        404:
+          description: No valid receipt found with this receipt number
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                statusCode: 404
+                error:
+                  code: RECEIPT_NOT_FOUND
+                  message: No valid receipt found with this receipt number
+                timestamp: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/receipt-books":
+    get:
+      tags:
+        - Receipt Book Allocation
+      summary: List physical receipt books
+      operationId: listReceiptBooks
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Receipt books retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ReceiptBook"
+                  meta:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                        example: 1
+                      limit:
+                        type: integer
+                        example: 20
+                      totalRecords:
+                        type: integer
+                        example: 45
+                      totalPages:
+                        type: integer
+                        example: 3
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    post:
+      tags:
+        - Receipt Book Allocation
+      summary: Create new receipt book series
+      operationId: createReceiptBook
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - bookNumber
+                - startLeaf
+                - endLeaf
+              properties:
+                bookNumber:
+                  type: string
+                  example: BOOK-01
+                startLeaf:
+                  type: integer
+                  example: 1001
+                endLeaf:
+                  type: integer
+                  example: 1050
+                assignedToUserId:
+                  type: string
+                  example: usr_998877
+      responses:
+        201:
+          description: Receipt book created
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/ReceiptBook"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/receipt-books/{book}":
+    get:
+      tags:
+        - Receipt Book Allocation
+      summary: Get receipt book details & leaf status
+      operationId: getReceiptBook
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: book
+          in: path
+          required: true
+          schema:
+            type: string
+          example: bk_001
+      responses:
+        200:
+          description: Receipt book retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/ReceiptBook"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/receipt-books/{book}/assign":
+    post:
+      tags:
+        - Receipt Book Allocation
+      summary: Assign receipt book to collector
+      operationId: assignReceiptBook
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: book
+          in: path
+          required: true
+          schema:
+            type: string
+          example: bk_001
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - assignedToUserId
+              properties:
+                assignedToUserId:
+                  type: string
+                  example: usr_998877
+      responses:
+        200:
+          description: Book assigned successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/ReceiptBook"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/receipt-books/{book}/status":
+    patch:
+      tags:
+        - Receipt Book Allocation
+      summary: Update receipt book status (ACTIVE, COMPLETED, LOST, CANCELLED)
+      operationId: updateReceiptBookStatus
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: book
+          in: path
+          required: true
+          schema:
+            type: string
+          example: bk_001
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  enum:
+                    - ACTIVE
+                    - COMPLETED
+                    - LOST
+                    - CANCELLED
+                  example: COMPLETED
+      responses:
+        200:
+          description: Book status updated
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/ReceiptBook"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/expenses":
+    get:
+      tags:
+        - Expense Management
+      summary: List festival expenses
+      operationId: listExpenses
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum:
+              - STAGE_MANDAP
+              - SOUND_LIGHTING
+              - MURTI_DECORATION
+              - POOJA_PRASAD
+              - SECURITY_LOGISTICS
+              - MISCELLANEOUS
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum:
+              - PAID
+              - PENDING
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        200:
+          description: Expenses retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ExpenseEntry"
+                  meta:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                        example: 1
+                      limit:
+                        type: integer
+                        example: 20
+                      totalRecords:
+                        type: integer
+                        example: 45
+                      totalPages:
+                        type: integer
+                        example: 3
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    post:
+      tags:
+        - Expense Management
+      summary: Record new expense entry
+      operationId: createExpense
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - title
+                - amount
+                - category
+                - paymentMode
+              properties:
+                title:
+                  type: string
+                  example: Sound & Lighting System Setup
+                amount:
+                  type: number
+                  example: 45000
+                category:
+                  type: string
+                  enum:
+                    - STAGE_MANDAP
+                    - SOUND_LIGHTING
+                    - MURTI_DECORATION
+                    - POOJA_PRASAD
+                    - SECURITY_LOGISTICS
+                    - MISCELLANEOUS
+                  example: SOUND_LIGHTING
+                vendorName:
+                  type: string
+                  example: Swara Audio Visuals
+                vendorPhone:
+                  type: string
+                  example: 9890123456
+                paymentMode:
+                  type: string
+                  enum:
+                    - CASH
+                    - UPI
+                    - CHEQUE
+                    - NET_BANKING
+                  example: CASH
+                status:
+                  type: string
+                  enum:
+                    - PAID
+                    - PENDING
+                  default: PAID
+                billBase64:
+                  type: string
+                  description: Optional Base64 PDF/Image of invoice
+      responses:
+        201:
+          description: Expense recorded
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/ExpenseEntry"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/expenses/export":
+    get:
+      tags:
+        - Expense Management
+      summary: Export expenses as XLSX/CSV
+      operationId: exportExpenses
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: format
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - xlsx
+              - csv
+      responses:
+        200:
+          description: Expense export file
+          content:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+              schema:
+                type: string
+                format: binary
+  "/festivals/{festival}/expenses/{expense}":
+    get:
+      tags:
+        - Expense Management
+      summary: Get expense details
+      operationId: getExpense
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: expense
+          in: path
+          required: true
+          schema:
+            type: string
+          example: exp_503
+      responses:
+        200:
+          description: Expense retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/ExpenseEntry"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    patch:
+      tags:
+        - Expense Management
+      summary: Update expense details
+      operationId: updateExpense
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: expense
+          in: path
+          required: true
+          schema:
+            type: string
+          example: exp_503
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  example: Sound & Lighting - Advance
+                amount:
+                  type: number
+                  example: 50000
+                vendorName:
+                  type: string
+                  example: Swara Audio Visuals
+      responses:
+        200:
+          description: Expense updated
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/ExpenseEntry"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/expenses/{expense}/bill":
+    post:
+      tags:
+        - Expense Management
+      summary: Upload bill photo or invoice PDF
+      operationId: uploadExpenseBill
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: expense
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "multipart/form-data":
+            schema:
+              type: object
+              required:
+                - bill
+              properties:
+                bill:
+                  type: string
+                  format: binary
+                  description: JPEG/PNG/PDF bill up to 2MB
+      responses:
+        200:
+          description: Bill attached
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      billUrl:
+                        type: string
+                        example: "https://storage.mandalhisab.in/bills/exp_503.pdf"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/expenses/{expense}/mark-paid":
+    patch:
+      tags:
+        - Expense Management
+      summary: Mark pending expense as PAID
+      operationId: markExpensePaid
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: expense
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - paymentMode
+              properties:
+                paymentMode:
+                  type: string
+                  enum:
+                    - CASH
+                    - UPI
+                    - CHEQUE
+                    - NET_BANKING
+                  example: UPI
+                transactionReference:
+                  type: string
+                  example: UPI88776655
+      responses:
+        200:
+          description: Expense marked paid
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/ExpenseEntry"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/funds/summary":
+    get:
+      tags:
+        - Funds & Treasury
+      summary: Get treasury fund summary
+      description: Returns cash held with treasurer, cash with individual collectors, bank accounts total, and pending handovers.
+      operationId: getFundSummary
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Funds summary calculated
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      cashWithTreasurer:
+                        type: number
+                        example: 145000
+                      cashWithCollectors:
+                        type: number
+                        example: 35000
+                      totalInBank:
+                        type: number
+                        example: 125000
+                      totalInUpi:
+                        type: number
+                        example: 60000
+                      totalFunds:
+                        type: number
+                        example: 365000
+                      pendingHandoversAmount:
+                        type: number
+                        example: 12000
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/funds/money-trail":
+    get:
+      tags:
+        - Funds & Treasury
+      summary: Audit log of all money movements (Money Trail)
+      operationId: getMoneyTrail
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: movementType
+          in: query
+          schema:
+            type: string
+            enum:
+              - CASH_RECEIVED
+              - UPI_RECEIVED
+              - BANK_DEPOSIT
+              - BANK_WITHDRAWAL
+              - CASH_EXPENSE
+              - CASH_HANDOVER
+              - FUND_TRANSFER
+              - OTHER_INCOME
+      responses:
+        200:
+          description: Money trail logs retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          example: mt_001
+                        movementType:
+                          type: string
+                          example: CASH_HANDOVER
+                        amount:
+                          type: number
+                          example: 10000
+                        fromAccount:
+                          type: string
+                          example: usr_998877
+                        toAccount:
+                          type: string
+                          example: TREASURER_CASH
+                        timestamp:
+                          type: string
+                          format: date-time
+                          example: "2026-08-09T16:26:30.000Z"
+                  meta:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                        example: 1
+                      limit:
+                        type: integer
+                        example: 20
+                      totalRecords:
+                        type: integer
+                        example: 45
+                      totalPages:
+                        type: integer
+                        example: 3
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/funds/handovers":
+    get:
+      tags:
+        - Funds & Treasury
+      summary: List cash handovers
+      operationId: listHandovers
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum:
+              - PENDING_APPROVAL
+              - VERIFIED_ACCEPTED
+              - REJECTED
+      responses:
+        200:
+          description: Handovers retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CashHandover"
+                  meta:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                        example: 1
+                      limit:
+                        type: integer
+                        example: 20
+                      totalRecords:
+                        type: integer
+                        example: 45
+                      totalPages:
+                        type: integer
+                        example: 3
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    post:
+      tags:
+        - Funds & Treasury
+      summary: Initiate cash handover to Treasurer
+      description: Collector submits cash collected to Treasurer for verification and safe custody.
+      operationId: createHandover
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - amount
+                - toUserId
+              properties:
+                amount:
+                  type: number
+                  example: 10000
+                toUserId:
+                  type: string
+                  description: Treasurer user ID
+                  example: usr_112233
+                notes:
+                  type: string
+                  example: Evening collection from Shivaji Chowk shops
+      responses:
+        201:
+          description: Handover initiated (pending approval)
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/CashHandover"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/funds/handovers/{handover}":
+    get:
+      tags:
+        - Funds & Treasury
+      summary: Get handover details
+      operationId: getHandover
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: handover
+          in: path
+          required: true
+          schema:
+            type: string
+          example: hnd_901
+      responses:
+        200:
+          description: Handover details retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/CashHandover"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/funds/handovers/{handover}/verify":
+    post:
+      tags:
+        - Funds & Treasury
+      summary: Verify & accept/reject cash handover (Treasurer only)
+      description: Exclusive to TREASURER. Requires 4-digit security PIN or cryptographic biometric attestation signature.
+      operationId: verifyHandover
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: handover
+          in: path
+          required: true
+          schema:
+            type: string
+          example: hnd_901
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - action
+                - authMethod
+              properties:
+                action:
+                  type: string
+                  enum:
+                    - ACCEPT
+                    - REJECT
+                  example: ACCEPT
+                authMethod:
+                  type: string
+                  enum:
+                    - PIN
+                    - BIOMETRIC
+                  example: PIN
+                pin:
+                  type: string
+                  description: Required if authMethod=PIN
+                  example: 9876
+                authSignature:
+                  type: string
+                  description: Required if authMethod=BIOMETRIC
+                rejectionReason:
+                  type: string
+                  example: "Physical cash mismatch: counted 9500 vs 10000"
+      responses:
+        200:
+          description: Handover verified and processed
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/CashHandover"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+        403:
+          description: Only assigned Treasurer can verify handovers
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                statusCode: 403
+                error:
+                  code: FORBIDDEN
+                  message: Only assigned Treasurer can verify handovers
+                timestamp: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/funds/bank-accounts":
+    get:
+      tags:
+        - Funds & Treasury
+      summary: List Mandal bank accounts
+      operationId: listBankAccounts
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Bank accounts retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BankAccount"
+                  meta:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                        example: 1
+                      limit:
+                        type: integer
+                        example: 20
+                      totalRecords:
+                        type: integer
+                        example: 45
+                      totalPages:
+                        type: integer
+                        example: 3
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    post:
+      tags:
+        - Funds & Treasury
+      summary: Register new bank account
+      operationId: createBankAccount
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - bankName
+                - accountNumber
+                - ifscCode
+                - accountType
+              properties:
+                bankName:
+                  type: string
+                  example: State Bank of India
+                accountNumber:
+                  type: string
+                  example: 123456789012
+                ifscCode:
+                  type: string
+                  example: SBIN0001234
+                accountType:
+                  type: string
+                  enum:
+                    - CURRENT
+                    - SAVINGS
+                  example: CURRENT
+                openingBalance:
+                  type: number
+                  example: 50000
+      responses:
+        201:
+          description: Bank account registered
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/BankAccount"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/funds/bank-accounts/{account}":
+    patch:
+      tags:
+        - Funds & Treasury
+      summary: Update bank account details
+      operationId: updateBankAccount
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+          example: bnk_01
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              properties:
+                bankName:
+                  type: string
+                  example: State Bank of India (Main Branch)
+                ifscCode:
+                  type: string
+                  example: SBIN0001234
+      responses:
+        200:
+          description: Bank account updated
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    $ref: "#/components/schemas/BankAccount"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/funds/transfers":
+    post:
+      tags:
+        - Funds & Treasury
+      summary: Transfer funds between cash and bank
+      operationId: transferFunds
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - fromBucket
+                - toBucket
+                - amount
+              properties:
+                fromBucket:
+                  type: string
+                  enum:
+                    - CASH_TREASURER
+                    - BANK
+                    - UPI
+                  example: CASH_TREASURER
+                toBucket:
+                  type: string
+                  enum:
+                    - CASH_TREASURER
+                    - BANK
+                    - UPI
+                  example: BANK
+                bankAccountId:
+                  type: string
+                  description: Required when BANK is source or destination
+                  example: bnk_01
+                amount:
+                  type: number
+                  example: 50000
+                notes:
+                  type: string
+                  example: Cash deposit to SBI current account
+      responses:
+        201:
+          description: Fund transfer recorded
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      transferId:
+                        type: string
+                        example: trf_123
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/other-income":
+    get:
+      tags:
+        - Funds & Treasury
+      summary: List other incomes / sponsorships
+      operationId: listOtherIncome
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Other income records retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          example: inc_001
+                        title:
+                          type: string
+                          example: Main Stage Banner Sponsorship
+                        sponsorName:
+                          type: string
+                          example: Kalyan Jewellers
+                        amount:
+                          type: number
+                          example: 50000
+                        paymentMode:
+                          type: string
+                          example: UPI
+                  meta:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                        example: 1
+                      limit:
+                        type: integer
+                        example: 20
+                      totalRecords:
+                        type: integer
+                        example: 45
+                      totalPages:
+                        type: integer
+                        example: 3
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    post:
+      tags:
+        - Funds & Treasury
+      summary: Record other income / sponsorship
+      operationId: createOtherIncome
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - title
+                - amount
+                - paymentMode
+              properties:
+                title:
+                  type: string
+                  example: Main Stage Banner Sponsorship
+                sponsorName:
+                  type: string
+                  example: Kalyan Jewellers
+                amount:
+                  type: number
+                  example: 50000
+                paymentMode:
+                  type: string
+                  enum:
+                    - CASH
+                    - UPI
+                    - CHEQUE
+                    - NET_BANKING
+                  example: UPI
+      responses:
+        201:
+          description: Other income recorded
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        example: inc_001
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/mandals/{mandal}/members":
+    get:
+      tags:
+        - Mandal Members & Roles
+      summary: List Mandal members & assigned roles
+      operationId: listMembers
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: mandal
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Members retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          example: mbr_01
+                        userId:
+                          type: string
+                          example: usr_998877
+                        fullName:
+                          type: string
+                          example: Sagar Patil
+                        phone:
+                          type: string
+                          example: 9876543210
+                        role:
+                          type: string
+                          enum:
+                            - ADMIN
+                            - TREASURER
+                            - COLLECTOR
+                            - MEMBER
+                          example: COLLECTOR
+                        area:
+                          type: string
+                          example: Shivaji Chowk Area
+                        isActive:
+                          type: boolean
+                          example: true
+                  meta:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                        example: 1
+                      limit:
+                        type: integer
+                        example: 20
+                      totalRecords:
+                        type: integer
+                        example: 45
+                      totalPages:
+                        type: integer
+                        example: 3
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    post:
+      tags:
+        - Mandal Members & Roles
+      summary: Add or invite member to Mandal
+      operationId: addMember
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: mandal
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - phone
+                - fullName
+                - role
+              properties:
+                phone:
+                  type: string
+                  example: 9822334455
+                fullName:
+                  type: string
+                  example: Ganesh Shinde
+                role:
+                  type: string
+                  enum:
+                    - ADMIN
+                    - TREASURER
+                    - COLLECTOR
+                    - MEMBER
+                  example: TREASURER
+                area:
+                  type: string
+                  example: Main Office
+      responses:
+        201:
+          description: Member added successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      memberId:
+                        type: string
+                        example: mbr_02
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/mandals/{mandal}/members/{member}":
+    get:
+      tags:
+        - Mandal Members & Roles
+      summary: Get member details
+      operationId: getMember
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: mandal
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: member
+          in: path
+          required: true
+          schema:
+            type: string
+          example: usr_998877
+      responses:
+        200:
+          description: Member profile retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      userId:
+                        type: string
+                        example: usr_998877
+                      fullName:
+                        type: string
+                        example: Sagar Patil
+                      phone:
+                        type: string
+                        example: 9876543210
+                      role:
+                        type: string
+                        example: COLLECTOR
+                      area:
+                        type: string
+                        example: Shivaji Chowk
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+    patch:
+      tags:
+        - Mandal Members & Roles
+      summary: Update member role or assigned area
+      operationId: updateMember
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: mandal
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: member
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              properties:
+                role:
+                  type: string
+                  enum:
+                    - ADMIN
+                    - TREASURER
+                    - COLLECTOR
+                    - MEMBER
+                  example: TREASURER
+                area:
+                  type: string
+                  example: Zone 1
+      responses:
+        200:
+          description: Member updated successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      updated:
+                        type: boolean
+                        example: true
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/mandals/{mandal}/members/{member}/financial-summary":
+    get:
+      tags:
+        - Mandal Members & Roles
+      summary: Get member financial performance summary
+      operationId: getMemberFinancialSummary
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: mandal
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: member
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Financial summary retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      totalCollected:
+                        type: number
+                        example: 125000
+                      cashCollected:
+                        type: number
+                        example: 75000
+                      upiCollected:
+                        type: number
+                        example: 50000
+                      cashHandedOver:
+                        type: number
+                        example: 65000
+                      cashInHandRemaining:
+                        type: number
+                        example: 10000
+                      totalReceiptsIssued:
+                        type: integer
+                        example: 45
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/mandals/{mandal}/members/{member}/deactivate":
+    post:
+      tags:
+        - Mandal Members & Roles
+      summary: Deactivate member from Mandal
+      operationId: deactivateMember
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      parameters:
+        - name: mandal
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: member
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Member deactivated
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      isActive:
+                        type: boolean
+                        example: false
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/reports/overview":
+    get:
+      tags:
+        - Reports & Final Hisab
+      summary: Comprehensive financial overview report
+      operationId: getReportsOverview
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Financial report overview
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      totalIncome:
+                        type: number
+                        example: 572501
+                      totalExpenses:
+                        type: number
+                        example: 345000
+                      surplusBalance:
+                        type: number
+                        example: 227501
+                      varganiReceiptsCount:
+                        type: integer
+                        example: 184
+                      expenseVouchersCount:
+                        type: integer
+                        example: 24
+                      cashReconciled:
+                        type: boolean
+                        example: true
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/reports/{reportType}":
+    get:
+      tags:
+        - Reports & Final Hisab
+      summary: Download typed financial reports
+      operationId: getTypedReport
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: reportType
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - income-expense
+              - collections
+              - expenses
+              - collectors
+              - receipt-books
+              - cash
+          example: income-expense
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum:
+              - json
+              - xlsx
+              - pdf
+            default: json
+      responses:
+        200:
+          description: Report generated
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/reports/final-hisab":
+    get:
+      tags:
+        - Reports & Final Hisab
+      summary: Get Final Hisab audit check & sign-off status
+      operationId: getFinalHisabStatus
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Final Hisab status
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      isLocked:
+                        type: boolean
+                        example: false
+                      presidentSigned:
+                        type: boolean
+                        example: true
+                      presidentSignedAt:
+                        type: string
+                        format: date-time
+                        example: "2026-08-26T09:30:00.000Z"
+                      treasurerSigned:
+                        type: boolean
+                        example: false
+                      treasurerSignedAt:
+                        type: string
+                        format: date-time
+                        nullable: true
+                        example: null
+                      unverifiedHandoversCount:
+                        type: integer
+                        example: 0
+                      unpaidExpensesCount:
+                        type: integer
+                        example: 0
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/reports/final-hisab/sign":
+    post:
+      tags:
+        - Reports & Final Hisab
+      summary: Sign & lock Final Hisab (President or Treasurer)
+      description: Dual sign-off endpoint. Once both President (ADMIN) and Treasurer sign, the festival is permanently locked.
+      operationId: signFinalHisab
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - authMethod
+              properties:
+                authMethod:
+                  type: string
+                  enum:
+                    - PIN
+                    - BIOMETRIC
+                  example: PIN
+                pin:
+                  type: string
+                  example: 9876
+                authSignature:
+                  type: string
+      responses:
+        200:
+          description: Final Hisab signed successfully
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      isLocked:
+                        type: boolean
+                        example: true
+                      message: Festival accounts have been audited and locked permanently.
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/festivals/{festival}/reports/final-hisab/pdf":
+    get:
+      tags:
+        - Reports & Final Hisab
+      summary: Download Final Audited Hisab Statement PDF
+      operationId: downloadFinalHisabPdf
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festival
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Audited Hisab PDF document
+          content:
+            "application/pdf":
+              schema:
+                type: string
+                format: binary
+  "/config/app":
+    get:
+      tags:
+        - App Config & Public
+      summary: Get public app configuration & feature flags
+      operationId: getAppConfig
+      responses:
+        200:
+          description: App config retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      minAppVersion:
+                        type: string
+                        example: 1.0.0
+                      latestAppVersion:
+                        type: string
+                        example: 1.2.0
+                      maintenanceMode:
+                        type: boolean
+                        example: false
+                      supportedLanguages:
+                        type: array
+                        items:
+                          type: string
+                        example:
+                          - en
+                          - mr
+                      whatsappSupportNumber:
+                        type: string
+                        example: +919876543210
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/devices/token":
+    put:
+      tags:
+        - Devices & Notifications
+      summary: Register or update FCM push notification token
+      operationId: registerDeviceToken
+      security:
+        - BearerAuth:[]
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - fcmToken
+                - platform
+              properties:
+                fcmToken:
+                  type: string
+                  example: fcm_token_device_abc123
+                platform:
+                  type: string
+                  enum:
+                    - android
+                    - ios
+                    - web
+                    - windows
+                  example: android
+                appVersion:
+                  type: string
+                  example: 1.0.0+1
+      responses:
+        200:
+          description: Device token registered
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      registered:
+                        type: boolean
+                        example: true
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/notifications":
+    get:
+      tags:
+        - Devices & Notifications
+      summary: List user notifications
+      operationId: listNotifications
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: unreadOnly
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        200:
+          description: Notifications retrieved
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          example: ntf_01
+                        type:
+                          type: string
+                          enum:
+                            - HANDOVER_INITIATED
+                            - HANDOVER_APPROVED
+                            - HANDOVER_REJECTED
+                            - VARGANI_CREATED
+                            - EXPENSE_CREATED
+                            - FINAL_HISAB_SIGNED
+                            - GENERAL
+                          example: HANDOVER_INITIATED
+                        title:
+                          type: string
+                          example: Cash Handover Received
+                        body:
+                          type: string
+                          example: Sagar Patil initiated a cash handover of ₹10,000
+                        isRead:
+                          type: boolean
+                          example: false
+                        createdAt:
+                          type: string
+                          format: date-time
+                          example: "2026-08-09T16:25:00.000Z"
+                  meta:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                        example: 1
+                      limit:
+                        type: integer
+                        example: 20
+                      totalRecords:
+                        type: integer
+                        example: 45
+                      totalPages:
+                        type: integer
+                        example: 3
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/notifications/{notification}/read":
+    patch:
+      tags:
+        - Devices & Notifications
+      summary: Mark single notification as read
+      operationId: markNotificationRead
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: notification
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Notification marked read
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      isRead:
+                        type: boolean
+                        example: true
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/notifications/read-all":
+    post:
+      tags:
+        - Devices & Notifications
+      summary: Mark all notifications as read
+      operationId: markAllNotificationsRead
+      security:
+        - BearerAuth:[]
+      responses:
+        200:
+          description: All notifications marked read
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      markedCount:
+                        type: integer
+                        example: 5
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/sync/batch":
+    post:
+      tags:
+        - Offline Sync & Real-time
+      summary: Batch push offline mutation queue
+      description: Uploads an array of client-queued offline actions (receipts, handovers, expenses) with idempotency tracking and conflict resolution.
+      operationId: syncBatchPush
+      security:
+        - BearerAuth:[]
+        - IdempotencyKey:[]
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: object
+              required:
+                - mutations
+              properties:
+                mutations:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - clientMutationId
+                      - action
+                      - payload
+                      - clientTimestamp
+                    properties:
+                      clientMutationId:
+                        type: string
+                        example: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+                      action:
+                        type: string
+                        enum:
+                          - CREATE_VARGANI
+                          - CREATE_EXPENSE
+                          - INITIATE_HANDOVER
+                        example: CREATE_VARGANI
+                      payload:
+                        type: object
+                      clientTimestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:10:00.000Z"
+      responses:
+        200:
+          description: Batch sync processed
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      processedCount:
+                        type: integer
+                        example: 3
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            clientMutationId:
+                              type: string
+                              example: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+                            status:
+                              type: string
+                              enum:
+                                - SUCCESS
+                                - CONFLICT
+                                - ERROR
+                              example: SUCCESS
+                            serverEntityId:
+                              type: string
+                              example: vrg_102
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/sync/pull":
+    get:
+      tags:
+        - Offline Sync & Real-time
+      summary: Pull server delta changes since timestamp
+      operationId: syncPullDelta
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: since
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          example: "2026-08-09T15:00:00.000Z"
+        - name: festivalId
+          in: query
+          required: true
+          schema:
+            type: string
+          example: fst_ganeshotsav_2026
+      responses:
+        200:
+          description: Delta changes pulled
+          content:
+            "application/json":
+              schema:
+                type: object
+                required:
+                  - success
+                  - statusCode
+                  - message
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  statusCode:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Operation completed successfully
+                  data:
+                    type: object
+                    properties:
+                      serverTimestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:30:00.000Z"
+                      vargani:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/VarganiEntry"
+                      expenses:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ExpenseEntry"
+                      receiptBooks:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ReceiptBook"
+                      handovers:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CashHandover"
+                  meta:
+                    type: object
+                    properties:
+                      timestamp:
+                        type: string
+                        format: date-time
+                        example: "2026-08-09T16:15:00.000Z"
+  "/stream/events":
+    get:
+      tags:
+        - Offline Sync & Real-time
+      summary: Server-Sent Events (SSE) live event stream
+      description: Establishes a persistent SSE stream receiving real-time events (`vargani.created`, `expense.created`, `handover.initiated`, `handover.verified`, `final_hisab.signed`).
+      operationId: streamEvents
+      security:
+        - BearerAuth:[]
+      parameters:
+        - name: festivalId
+          in: query
+          required: true
+          schema:
+            type: string
+          example: fst_ganeshotsav_2026
+      responses:
+        200:
+          description: Real-time event stream
+          content:
+            "text/event-stream":
+              schema:
+                type: string
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "Standard JWT Access Token passed in `Authorization: Bearer <token>` header."
+    IdempotencyKey:
+      type: apiKey
+      in: header
+      name: Idempotency-Key
+      description: Unique UUID v4 string required for state-modifying financial POST/PATCH endpoints.
+    TenantMandalId:
+      type: apiKey
+      in: header
+      name: X-Mandal-Id
+      description: Multi-tenant Mandal ID shortcut.
+    TenantFestivalId:
+      type: apiKey
+      in: header
+      name: X-Festival-Id
+      description: Multi-tenant Festival ID shortcut.
+    ClientLanguage:
+      type: apiKey
+      in: header
+      name: X-Client-Language
+      description: "Preferred language: `en` (English) or `mr` (Marathi)."
+  schemas:
+    AuthTokens:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        tokenType:
+          type: string
+          example: Bearer
+        expiresIn:
+          type: integer
+          example: 1800
+        refreshToken:
+          type: string
+          example: rft_98a7b6c5d4e3f2
+    SuccessEnvelope:
+      type: object
+      required:
+        - success
+        - statusCode
+        - message
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Operation completed successfully
+        data:
+          type: object
+        meta:
+          type: object
+          properties:
+            page:
+              type: integer
+              example: 1
+            limit:
+              type: integer
+              example: 20
+            totalRecords:
+              type: integer
+              example: 145
+            totalPages:
+              type: integer
+              example: 8
+            timestamp:
+              type: string
+              format: date-time
+              example: "2026-08-09T16:15:00.000Z"
+    ErrorEnvelope:
+      type: object
+      required:
+        - success
+        - statusCode
+        - error
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: false
+        statusCode:
+          type: integer
+          example: 422
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: VALIDATION_FAILED
+            message:
+              type: string
+              example: Invalid input data provided
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                    example: phone
+                  issue:
+                    type: string
+                    example: Phone must be a valid 10-digit Indian number
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-08-09T16:15:00.000Z"
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          example: usr_998877
+        fullName:
+          type: string
+          example: Sagar Patil
+        username:
+          type: string
+          nullable: true
+          example: sagar_patil
+        phone:
+          type: string
+          example: 9876543210
+        email:
+          type: string
+          nullable: true
+          example: sagar@example.com
+        avatarUrl:
+          type: string
+          nullable: true
+          example: "https://storage.mandalhisab.in/avatars/usr_998877.jpg"
+        defaultLanguage:
+          type: string
+          enum:
+            - en
+            - mr
+          example: mr
+        isBiometricEnabled:
+          type: boolean
+          example: true
+        activeFestivalId:
+          type: string
+          nullable: true
+          example: fst_ganeshotsav_2026
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-08-01T10:00:00.000Z"
+    Mandal:
+      type: object
+      properties:
+        id:
+          type: string
+          example: mnd_shree_ganesh_2026
+        name:
+          type: string
+          example: Shree Ganesh Utsav Mandal
+        registrationNumber:
+          type: string
+          nullable: true
+          example: MAH/1234/2010
+        establishedYear:
+          type: integer
+          example: 2010
+        address:
+          type: string
+          example: Shivaji Chowk, Main Road
+        city:
+          type: string
+          example: Pune
+        pincode:
+          type: string
+          example: 411001
+        wardNumber:
+          type: string
+          nullable: true
+          example: Ward 12
+        contactNumber:
+          type: string
+          example: 9876543210
+        logoUrl:
+          type: string
+          nullable: true
+          example: "https://storage.mandalhisab.in/logos/mnd_1.png"
+        upiId:
+          type: string
+          nullable: true
+          example: shreeganesh@upi
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-08-01T10:00:00.000Z"
+    Festival:
+      type: object
+      properties:
+        id:
+          type: string
+          example: fst_ganeshotsav_2026
+        mandalId:
+          type: string
+          example: mnd_shree_ganesh_2026
+        name:
+          type: string
+          example: Ganeshotsav 2026
+        startDate:
+          type: string
+          format: date
+          example: 2026-08-15
+        endDate:
+          type: string
+          format: date
+          example: 2026-08-25
+        status:
+          type: string
+          enum:
+            - ACTIVE
+            - UPCOMING
+            - COMPLETED
+          example: ACTIVE
+        targetCollection:
+          type: number
+          example: 500000
+        budgetLimit:
+          type: number
+          example: 450000
+        isFinalHisabLocked:
+          type: boolean
+          example: false
+    VarganiEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          example: vrg_102
+        festivalId:
+          type: string
+          example: fst_ganeshotsav_2026
+        receiptNumber:
+          type: string
+          example: 1246
+        receiptType:
+          type: string
+          enum:
+            - DIGITAL
+            - PHYSICAL_BOOK
+          example: DIGITAL
+        receiptBookId:
+          type: string
+          nullable: true
+          example: null
+        receiptBookLeafNumber:
+          type: integer
+          nullable: true
+          example: null
+        donorName:
+          type: string
+          example: Sunil Gaikwad
+        donorPhone:
+          type: string
+          nullable: true
+          example: 9822012345
+        donorAddress:
+          type: string
+          nullable: true
+          example: Flat 4, Shanti Heights, Pune
+        amount:
+          type: number
+          example: 2501
+        paymentMode:
+          type: string
+          enum:
+            - CASH
+            - UPI
+            - CHEQUE
+            - NET_BANKING
+          example: UPI
+        upiTransactionId:
+          type: string
+          nullable: true
+          example: UPI20260809123456
+        chequeNumber:
+          type: string
+          nullable: true
+          example: null
+        bankName:
+          type: string
+          nullable: true
+          example: null
+        collectorId:
+          type: string
+          example: usr_998877
+        collectorName:
+          type: string
+          example: Sagar Patil
+        signatureUrl:
+          type: string
+          nullable: true
+          example: "https://storage.mandalhisab.in/signatures/vrg_102.png"
+        pdfUrl:
+          type: string
+          example: "https://storage.mandalhisab.in/receipts/vrg_102.pdf"
+        isCancelled:
+          type: boolean
+          example: false
+        cancellationReason:
+          type: string
+          nullable: true
+          example: null
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-08-09T16:20:00.000Z"
+    ExpenseEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          example: exp_503
+        festivalId:
+          type: string
+          example: fst_ganeshotsav_2026
+        voucherNumber:
+          type: string
+          example: EXP-2026-001
+        title:
+          type: string
+          example: Sound & Lighting System Setup
+        amount:
+          type: number
+          example: 45000
+        category:
+          type: string
+          enum:
+            - STAGE_MANDAP
+            - SOUND_LIGHTING
+            - MURTI_DECORATION
+            - POOJA_PRASAD
+            - SECURITY_LOGISTICS
+            - MISCELLANEOUS
+          example: SOUND_LIGHTING
+        vendorName:
+          type: string
+          example: Swara Audio Visuals
+        vendorPhone:
+          type: string
+          nullable: true
+          example: 9890123456
+        paymentMode:
+          type: string
+          enum:
+            - CASH
+            - UPI
+            - CHEQUE
+            - NET_BANKING
+          example: CASH
+        status:
+          type: string
+          enum:
+            - PAID
+            - PENDING
+          example: PAID
+        billUrl:
+          type: string
+          nullable: true
+          example: "https://storage.mandalhisab.in/bills/exp_503.pdf"
+        recordedByUserId:
+          type: string
+          example: usr_112233
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-08-09T16:22:00.000Z"
+    ReceiptBook:
+      type: object
+      properties:
+        id:
+          type: string
+          example: bk_001
+        festivalId:
+          type: string
+          example: fst_ganeshotsav_2026
+        bookNumber:
+          type: string
+          example: BOOK-01
+        startLeaf:
+          type: integer
+          example: 1001
+        endLeaf:
+          type: integer
+          example: 1050
+        totalLeaves:
+          type: integer
+          example: 50
+        usedLeaves:
+          type: integer
+          example: 28
+        cancelledLeaves:
+          type: integer
+          example: 1
+        assignedToUserId:
+          type: string
+          nullable: true
+          example: usr_998877
+        assignedToName:
+          type: string
+          nullable: true
+          example: Sagar Patil
+        status:
+          type: string
+          enum:
+            - ACTIVE
+            - COMPLETED
+            - LOST
+            - CANCELLED
+          example: ACTIVE
+    CashHandover:
+      type: object
+      properties:
+        id:
+          type: string
+          example: hnd_901
+        festivalId:
+          type: string
+          example: fst_ganeshotsav_2026
+        amount:
+          type: number
+          example: 10000
+        fromUserId:
+          type: string
+          example: usr_998877
+        fromUserName:
+          type: string
+          example: Sagar Patil
+        toUserId:
+          type: string
+          example: usr_112233
+        toUserName:
+          type: string
+          example: Ganesh Shinde (Treasurer)
+        status:
+          type: string
+          enum:
+            - PENDING_APPROVAL
+            - VERIFIED_ACCEPTED
+            - REJECTED
+          example: VERIFIED_ACCEPTED
+        initiatedAt:
+          type: string
+          format: date-time
+          example: "2026-08-09T16:25:00.000Z"
+        verifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-08-09T16:26:30.000Z"
+        authMethod:
+          type: string
+          enum:
+            - BIOMETRIC
+            - PIN
+          nullable: true
+          example: PIN
+    BankAccount:
+      type: object
+      properties:
+        id:
+          type: string
+          example: bnk_01
+        mandalId:
+          type: string
+          example: mnd_shree_ganesh_2026
+        bankName:
+          type: string
+          example: State Bank of India
+        accountNumberMasked:
+          type: string
+          example: XXXX-XXXX-4589
+        ifscCode:
+          type: string
+          example: SBIN0001234
+        accountType:
+          type: string
+          enum:
+            - CURRENT
+            - SAVINGS
+          example: CURRENT
+        currentBalance:
+          type: number
+          example: 125000

@@ -1,0 +1,14 @@
+<?php
+
+namespace App\Enums;
+
+enum NotificationType: string
+{
+    case HANDOVER_INITIATED = 'HANDOVER_INITIATED';
+    case HANDOVER_APPROVED = 'HANDOVER_APPROVED';
+    case HANDOVER_REJECTED = 'HANDOVER_REJECTED';
+    case VARGANI_CREATED = 'VARGANI_CREATED';
+    case EXPENSE_CREATED = 'EXPENSE_CREATED';
+    case FINAL_HISAB_SIGNED = 'FINAL_HISAB_SIGNED';
+    case GENERAL = 'GENERAL';
+}

@@ -1,2 +1,11 @@
+# https://www.robotstxt.org/robotstxt.html
 User-agent: *
-Disallow:
+Allow: /
+Allow: /privacy-policy
+Allow: /terms-and-conditions
+Allow: /delete-account
+Allow: /doc
+Allow: /docs
+
+# Sitemaps
+Sitemap: https://mandalhishob.nexorytechnologies.com/sitemap.xml
