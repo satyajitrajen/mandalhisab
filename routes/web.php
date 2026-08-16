@@ -4,6 +4,12 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
+use App\Http\Controllers\PublicReceiptController;
+
+// Public Web Receipt View for Donors (Shared via WhatsApp / Web Link)
+Route::get('/receipt/{id}', [PublicReceiptController::class, 'show'])->name('public.receipt')->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
+Route::get('/receipts/{id}', [PublicReceiptController::class, 'show'])->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
+Route::get('/r/{id}', [PublicReceiptController::class, 'show'])->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
 
 Route::get('/', function () {
     $path = public_path('index.html');
