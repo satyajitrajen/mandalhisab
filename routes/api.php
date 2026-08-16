@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\SyncController;
 use App\Http\Controllers\Api\V1\EventStreamController;
 use App\Http\Controllers\Api\V1\AreaController;
+use App\Http\Controllers\Api\V1\AppUpdateController;
 
 /*
 |--------------------------------------------------------------------------
@@ -28,8 +29,9 @@ use App\Http\Controllers\Api\V1\AreaController;
 
 Route::prefix('v1')->group(function () {
 
-    // Public
+    // Public & Version Check
     Route::get('config/app', [ConfigController::class, 'appConfig']);
+    Route::get('app/version', [AppUpdateController::class, 'checkVersion']);
     Route::get('public/receipts/{receiptNumber}', [VarganiController::class, 'publicReceipt']);
     Route::post('public/account-deletion-request', [AuthController::class, 'publicAccountDeletionRequest']);
 
@@ -136,11 +138,12 @@ Route::prefix('v1')->group(function () {
         Route::get('festivals/{festival}/reports/final-hisab/pdf', [ReportController::class, 'finalHisabPdf']);
         Route::get('festivals/{festival}/reports/{reportType}', [ReportController::class, 'typedReport']);
 
-        // Devices & Notifications
+        // Devices, Notifications & App Updates
         Route::put('devices/token', [DeviceController::class, 'register']);
         Route::get('notifications', [NotificationController::class, 'index']);
         Route::patch('notifications/{notification}/read', [NotificationController::class, 'markRead']);
         Route::post('notifications/read-all', [NotificationController::class, 'markAllRead']);
+        Route::post('app/broadcast-update', [AppUpdateController::class, 'broadcastUpdatePush']);
 
         // Sync (idempotent: offline retries with the same client UUID must not duplicate)
         Route::post('sync/batch', [SyncController::class, 'batchPush'])->middleware(['hisab.locked', 'idempotency']);
