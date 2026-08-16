@@ -13,11 +13,15 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // User::factory(10)->create();
-
         User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
+            'full_name' => 'Demo Admin',
+            'username' => 'demoadmin',
+            'phone' => '9876543210',
+            'email' => 'admin@mandalhisab.in',
+            'password' => \Illuminate\Support\Facades\Hash::make('AdminPass@123'),
+            'security_pin' => \Illuminate\Support\Facades\Hash::make('1234'),
+            'default_language' => 'en',
+            'is_biometric_enabled' => true,
         ]);
     }
 }
