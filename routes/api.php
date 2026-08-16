@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\V1\DeviceController;
 use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\SyncController;
 use App\Http\Controllers\Api\V1\EventStreamController;
+use App\Http\Controllers\Api\V1\AreaController;
 
 /*
 |--------------------------------------------------------------------------
@@ -52,8 +53,12 @@ Route::prefix('v1')->group(function () {
         Route::put('auth/password', [AuthController::class, 'changePassword']);
         Route::delete('auth/me', [AuthController::class, 'deleteMe']);
 
-        // Mandals
+        // Mandals & Areas
         Route::apiResource('mandals', MandalController::class);
+        Route::get('mandals/{mandal}/areas', [AreaController::class, 'index']);
+        Route::post('mandals/{mandal}/areas', [AreaController::class, 'store']);
+        Route::put('areas/{area}', [AreaController::class, 'update']);
+        Route::delete('areas/{area}', [AreaController::class, 'destroy']);
 
         // Festivals (nested + shallow)
         Route::apiResource('mandals.festivals', FestivalController::class)->shallow()->only(['index', 'store']);

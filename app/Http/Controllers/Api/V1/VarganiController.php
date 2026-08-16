@@ -130,6 +130,28 @@ class VarganiController
         $festivalModel = Festival::findOrFail($festival);
         $this->checkCollectorOrAbove($festivalModel);
 
+        if ($request->has('receiptType')) {
+            $rt = strtoupper(str_replace(' ', '_', (string) $request->input('receiptType')));
+            if ($rt === 'PHYSICAL') {
+                $rt = 'PHYSICAL_BOOK';
+            }
+            $request->merge(['receiptType' => $rt]);
+        }
+        if ($request->has('paymentMode')) {
+            $pm = strtoupper(str_replace(' ', '_', (string) $request->input('paymentMode')));
+            if ($pm === 'BANK') {
+                $pm = 'NET_BANKING';
+            }
+            $request->merge(['paymentMode' => $pm]);
+        }
+
+        if ($request->has('mobileNumber') && $request->filled('mobileNumber')) {
+            $digits = preg_replace('/\D/', '', (string) $request->input('mobileNumber'));
+            if (strlen($digits) >= 10) {
+                $request->merge(['mobileNumber' => substr($digits, -10)]);
+            }
+        }
+
         $validated = $request->validate([
             'donorName' => ['required', 'string', 'min:2', 'max:60'],
             'mobileNumber' => ['nullable', 'string', 'size:10'],

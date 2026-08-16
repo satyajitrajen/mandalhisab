@@ -45,6 +45,13 @@ class MandalController
      */
     public function store(Request $request)
     {
+        if ($request->has('contactNumber')) {
+            $digits = preg_replace('/\D/', '', (string) $request->input('contactNumber'));
+            if (strlen($digits) >= 10) {
+                $request->merge(['contactNumber' => substr($digits, -10)]);
+            }
+        }
+
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'registrationNumber' => ['nullable', 'string', 'max:255'],
@@ -139,6 +146,13 @@ class MandalController
      */
     public function update(Request $request, Mandal $mandal)
     {
+        if ($request->has('contactNumber') && $request->filled('contactNumber')) {
+            $digits = preg_replace('/\D/', '', (string) $request->input('contactNumber'));
+            if (strlen($digits) >= 10) {
+                $request->merge(['contactNumber' => substr($digits, -10)]);
+            }
+        }
+
         $validated = $request->validate([
             'name' => ['nullable', 'string', 'max:255'],
             'registrationNumber' => ['nullable', 'string', 'max:255'],

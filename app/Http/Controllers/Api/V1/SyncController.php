@@ -201,12 +201,18 @@ class SyncController
             default => 'DIGITAL',
         };
 
+        $mobileNumber = null;
+        if (! empty($data['mobileNumber'])) {
+            $digits = preg_replace('/\D/', '', (string) $data['mobileNumber']);
+            $mobileNumber = (strlen($digits) >= 10) ? substr($digits, -10) : $digits;
+        }
+
         $collectorId = $data['collectorId'] ?? auth()->id();
 
         try {
             $entry = $this->varganiService->createVargani($festivalId, [
                 'donor_name' => $data['donorName'],
-                'mobile_number' => $data['mobileNumber'] ?? null,
+                'mobile_number' => $mobileNumber,
                 'amount' => $data['amount'],
                 'payment_mode' => $paymentMode,
                 'area' => $data['area'],

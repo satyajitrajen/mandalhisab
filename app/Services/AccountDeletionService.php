@@ -118,9 +118,21 @@ class AccountDeletionService
         });
     }
 
-    protected function extractPhone(string $input): ?string
+    public function extractPhone(string $input): ?string
     {
         $digits = preg_replace('/\D/', '', $input);
-        return (strlen($digits) === 10) ? $digits : null;
+        if (strlen($digits) === 10) {
+            return $digits;
+        }
+        if (strlen($digits) === 11 && str_starts_with($digits, '0')) {
+            return substr($digits, 1);
+        }
+        if (strlen($digits) === 12 && str_starts_with($digits, '91')) {
+            return substr($digits, 2);
+        }
+        if (strlen($digits) > 10) {
+            return substr($digits, -10);
+        }
+        return null;
     }
 }

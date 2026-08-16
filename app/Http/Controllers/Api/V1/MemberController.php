@@ -140,6 +140,13 @@ class MemberController
             return $this->error('FORBIDDEN', 'Only ADMIN can add members', 403);
         }
 
+        if ($request->has('phone')) {
+            $digits = preg_replace('/\D/', '', (string) $request->input('phone'));
+            if (strlen($digits) >= 10) {
+                $request->merge(['phone' => substr($digits, -10)]);
+            }
+        }
+
         $validated = $request->validate([
             'fullName' => ['required', 'string', 'max:80'],
             'phone' => ['required', 'string', 'regex:/^\d{10}$/'],
