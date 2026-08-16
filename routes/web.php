@@ -13,7 +13,10 @@ Route::get('/r/{id}', [PublicReceiptController::class, 'show'])->withoutMiddlewa
 
 // Direct App APK Download Routes
 Route::get('/download', function () {
-    $apkPath = public_path('mandalhisab.apk');
+    $apkPath = file_exists(public_path('mandalhishob.apk')) 
+        ? public_path('mandalhishob.apk') 
+        : public_path('mandalhisab.apk');
+
     if (file_exists($apkPath)) {
         return response()->download($apkPath, 'MandalHishob.apk', [
             'Content-Type' => 'application/vnd.android.package-archive',
@@ -27,6 +30,10 @@ Route::get('/download/apk', function () {
 })->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
 
 Route::get('/download-app', function () {
+    return redirect('/download');
+})->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
+
+Route::get('/mandalhishob.apk', function () {
     return redirect('/download');
 })->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
 

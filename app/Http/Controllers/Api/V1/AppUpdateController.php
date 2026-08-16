@@ -17,8 +17,10 @@ class AppUpdateController
      */
     private function getReleaseMetadata(): array
     {
-        $apkPath = public_path('mandalhisab.apk');
-        $fileSizeMb = file_exists($apkPath) ? round(filesize($apkPath) / (1024 * 1024), 1) : 62.7;
+        $apkPath = file_exists(public_path('mandalhishob.apk')) 
+            ? public_path('mandalhishob.apk') 
+            : public_path('mandalhisab.apk');
+        $fileSizeMb = file_exists($apkPath) ? round(filesize($apkPath) / (1024 * 1024), 1) : 62.8;
 
         return [
             'latestVersion' => config('app.latest_version', '1.0.0'),
