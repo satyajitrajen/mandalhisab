@@ -35,6 +35,13 @@ class SyncController
         $mandalId = $request->header('X-Mandal-Id');
         $festivalId = $request->header('X-Festival-Id');
 
+        // Header ids are client-controlled; without this guard an offline
+        // client could push records into another mandal's festival.
+        $guard = $this->checkFestivalMembership($festivalId);
+        if ($guard) {
+            return $guard;
+        }
+
         $validated = $request->validate([
             'payload' => ['required', 'array'],
         ]);
@@ -115,8 +122,9 @@ class SyncController
     {
         $festivalId = $request->header('X-Festival-Id');
 
-        if (empty($festivalId)) {
-            return $this->error('TENANT_REQUIRED', 'X-Festival-Id header is required', 400);
+        $guard = $this->checkFestivalMembership($festivalId);
+        if ($guard) {
+            return $guard;
         }
 
         $validated = $request->validate([
@@ -204,6 +212,20 @@ class SyncController
         }
 
         $collectorId = $data['collectorId'] ?? auth()->id();
+        if (! empty($data['collectorId'])) {
+            $collectorIsMember = MandalMember::where('mandal_id', Festival::where('id', $festivalId)->value('mandal_id'))
+                ->where('user_id', $data['collectorId'])
+                ->where('is_active', true)
+                ->exists();
+
+            if (! $collectorIsMember) {
+                return [
+                    'status' => 'error',
+                    'serverId' => null,
+                    'message' => 'Collector must be an active member of this mandal',
+                ];
+            }
+        }
 
         try {
             $entry = $this->varganiService->createVargani($festivalId, [
@@ -423,5 +445,27 @@ class SyncController
             'createdAt' => $m->created_at?->toIso8601String(),
             'updatedAt' => $m->updated_at?->toIso8601String(),
         ];
+    }
+
+    /**
+     * The caller must be an active member of the festival's mandal.
+     * Returns the error response, or null when the guard passes.
+     */
+    protected function checkFestivalMembership(?string $festivalId): ?JsonResponse
+    {
+        if (empty($festivalId)) {
+            return $this->error('TENANT_REQUIRED', 'X-Festival-Id header is required', 400);
+        }
+
+        $isMember = MandalMember::where('user_id', auth()->id())
+            ->where('is_active', true)
+            ->whereIn('mandal_id', Festival::where('id', $festivalId)->pluck('mandal_id'))
+            ->exists();
+
+        if (! $isMember) {
+            return $this->error('FORBIDDEN', 'You are not a member of this mandal', 403);
+        }
+
+        return null;
     }
 }

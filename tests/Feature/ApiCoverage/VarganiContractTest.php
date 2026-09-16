@@ -297,4 +297,98 @@ class VarganiContractTest extends TestCase
             ->postJson($base . '/vargani/' . $keptReceipt . '/cancel')
             ->assertStatus(200);
     }
+
+    public function test_store_rejects_collector_outside_mandal(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $outsider = User::factory()->create();
+
+        $base = '/api/v1/festivals/' . $ctx['festival']->id . '/vargani';
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($base, [
+                'donorName' => 'Donor One',
+                'amount' => 250,
+                'paymentMode' => 'CASH',
+                'area' => 'Kothrud',
+                'receiptType' => 'DIGITAL',
+                'collectorId' => $outsider->id,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'VALIDATION_FAILED');
+
+        $this->assertDatabaseMissing('vargani_entries', [
+            'festival_id' => $ctx['festival']->id,
+            'donor_name' => 'Donor One',
+        ]);
+
+        // A collector who is an active member of this mandal is accepted.
+        $peer = $this->makeMemberOf($ctx, MemberRole::COLLECTOR->value);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($base, [
+                'donorName' => 'Donor Two',
+                'amount' => 250,
+                'paymentMode' => 'CASH',
+                'area' => 'Kothrud',
+                'receiptType' => 'DIGITAL',
+                'collectorId' => $peer->id,
+            ])
+            ->assertStatus(201)
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseHas('vargani_entries', [
+            'festival_id' => $ctx['festival']->id,
+            'donor_name' => 'Donor Two',
+            'collector_id' => $peer->id,
+        ]);
+    }
+
+    public function test_store_rejects_unresolvable_collector_name(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani', [
+                'donorName' => 'Name Donor',
+                'amount' => 250,
+                'paymentMode' => 'CASH',
+                'area' => 'Kothrud',
+                'receiptType' => 'DIGITAL',
+                'collectorName' => 'Nobody By That Name',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'VALIDATION_FAILED');
+
+        $this->assertDatabaseMissing('vargani_entries', [
+            'festival_id' => $ctx['festival']->id,
+            'donor_name' => 'Name Donor',
+        ]);
+    }
+
+    public function test_store_rejects_deactivated_collector(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $former = $this->makeMemberOf($ctx, MemberRole::COLLECTOR->value);
+        \App\Models\MandalMember::where('mandal_id', $ctx['mandal']->id)
+            ->where('user_id', $former->id)
+            ->update(['is_active' => false]);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani', [
+                'donorName' => 'Stale Donor',
+                'amount' => 250,
+                'paymentMode' => 'CASH',
+                'area' => 'Kothrud',
+                'receiptType' => 'DIGITAL',
+                'collectorId' => $former->id,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'VALIDATION_FAILED');
+
+        $this->assertDatabaseMissing('vargani_entries', [
+            'festival_id' => $ctx['festival']->id,
+            'donor_name' => 'Stale Donor',
+        ]);
+    }
 }

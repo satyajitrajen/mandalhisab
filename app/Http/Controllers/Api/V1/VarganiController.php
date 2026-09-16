@@ -191,6 +191,26 @@ class VarganiController
                 ->whereHas('user', fn ($q) => $q->where('full_name', $validated['collectorName']))
                 ->value('user_id');
         }
+
+        // Receipts drive each collector's handover coverage, so an explicitly
+        // attributed collector must be an active member of this mandal.
+        if (empty($collectorId) && ! empty($validated['collectorName'])) {
+            // A name that resolves to nobody must not silently re-attribute
+            // the receipt to the caller.
+            return $this->error('VALIDATION_FAILED', 'Collector must be an active member of this mandal', 422);
+        }
+
+        if (! empty($collectorId)) {
+            $collectorIsMember = MandalMember::where('mandal_id', $festivalModel->mandal_id)
+                ->where('user_id', $collectorId)
+                ->where('is_active', true)
+                ->exists();
+
+            if (! $collectorIsMember) {
+                return $this->error('VALIDATION_FAILED', 'Collector must be an active member of this mandal', 422);
+            }
+        }
+
         $collectorId = $collectorId ?? auth()->id();
 
         try {

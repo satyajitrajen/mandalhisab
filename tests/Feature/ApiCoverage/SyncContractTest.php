@@ -4,6 +4,7 @@ namespace Tests\Feature\ApiCoverage;
 
 use App\Enums\MemberRole;
 use App\Models\FinalHisabAudit;
+use App\Models\User;
 use App\Models\VarganiEntry;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\JwtAuth;
@@ -82,6 +83,80 @@ class SyncContractTest extends TestCase
             'X-Mandal-Id' => $ctx['mandal']->id,
         ]))->postJson('/api/v1/sync/batch', [])
             ->assertStatus(422);
+    }
+
+    public function test_batch_push_rejects_festival_outside_callers_mandal(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $foreign = $this->makeFestivalContext(MemberRole::ADMIN->value);
+
+        $this->withHeaders($this->authHeaders($ctx['user'], [
+            'X-Festival-Id' => $foreign['festival']->id,
+            'X-Mandal-Id' => $foreign['mandal']->id,
+        ]))->postJson('/api/v1/sync/batch', [
+            'payload' => [[
+                'type' => 'vargani',
+                'action' => 'create',
+                'clientUuid' => 'uuid-foreign',
+                'data' => [
+                    'donorName' => 'Foreign Push',
+                    'amount' => 500,
+                    'paymentMode' => 'CASH',
+                    'area' => 'Kothrud',
+                    'receiptType' => 'DIGITAL',
+                ],
+            ]],
+        ])->assertStatus(403)
+            ->assertJsonPath('error.code', 'FORBIDDEN');
+
+        $this->assertDatabaseMissing('vargani_entries', [
+            'festival_id' => $foreign['festival']->id,
+            'donor_name' => 'Foreign Push',
+        ]);
+    }
+
+    public function test_pull_delta_rejects_non_member_of_festival(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $foreign = $this->makeFestivalContext(MemberRole::ADMIN->value);
+
+        $this->withHeaders($this->authHeaders($ctx['user'], [
+            'X-Festival-Id' => $foreign['festival']->id,
+        ]))->getJson('/api/v1/sync/pull?lastSyncAt=2026-01-01T00:00:00Z')
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'FORBIDDEN');
+    }
+
+    public function test_batch_push_rejects_collector_outside_mandal(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $outsider = User::factory()->create();
+
+        $this->withHeaders($this->authHeaders($ctx['user'], [
+            'X-Festival-Id' => $ctx['festival']->id,
+            'X-Mandal-Id' => $ctx['mandal']->id,
+        ]))->postJson('/api/v1/sync/batch', [
+            'payload' => [[
+                'type' => 'vargani',
+                'action' => 'create',
+                'clientUuid' => 'uuid-bad-collector',
+                'data' => [
+                    'donorName' => 'Misattributed',
+                    'amount' => 300,
+                    'paymentMode' => 'CASH',
+                    'area' => 'Kothrud',
+                    'collectorId' => $outsider->id,
+                    'receiptType' => 'DIGITAL',
+                ],
+            ]],
+        ])->assertStatus(200)
+            ->assertJsonPath('data.results.0.status', 'error')
+            ->assertJsonPath('data.results.0.message', 'Collector must be an active member of this mandal');
+
+        $this->assertDatabaseMissing('vargani_entries', [
+            'festival_id' => $ctx['festival']->id,
+            'donor_name' => 'Misattributed',
+        ]);
     }
 
     public function test_sync_batch_blocked_when_hisab_locked(): void
