@@ -25,18 +25,35 @@ class SendFcmNotification implements ShouldQueue
             return;
         }
 
-        $type = $this->notification->type;
-        $typeValue = $type instanceof \BackedEnum ? $type->value : (string) $type;
-
         $fcmService->sendToUser(
             $this->notification->user_id,
             $this->notification->title,
             $this->notification->body,
-            [
-                'type' => $typeValue,
-                'referenceId' => (string) ($this->notification->reference_id ?? ''),
-                'notificationId' => (string) $this->notification->id,
-            ]
+            $this->payload(),
         );
+    }
+
+    /**
+     * FCM data values must be strings; festival/mandal keys are omitted when
+     * the notification is not festival-scoped.
+     */
+    public function payload(): array
+    {
+        $type = $this->notification->type;
+        $typeValue = $type instanceof \BackedEnum ? $type->value : (string) $type;
+
+        $payload = [
+            'type' => $typeValue,
+            'referenceId' => (string) ($this->notification->reference_id ?? ''),
+            'notificationId' => (string) $this->notification->id,
+        ];
+
+        foreach (['festivalId' => 'festival_id', 'mandalId' => 'mandal_id'] as $key => $attribute) {
+            if ($this->notification->{$attribute} !== null) {
+                $payload[$key] = (string) $this->notification->{$attribute};
+            }
+        }
+
+        return $payload;
     }
 }
