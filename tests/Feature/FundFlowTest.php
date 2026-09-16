@@ -52,9 +52,16 @@ public function test_handover_verify_accept_moves_collector_cash_to_treasurer():
         $treasurer = $this->makeTreasurerOf($collector);
         $treasurer->forceFill(['security_pin' => Hash::make('1234')])->save();
 
-        $balance = FestivalBalance::where('festival_id', $collector['festival']->id)->first();
-        $balance->cash_collectors = 10000;
-        $balance->save();
+        // Collector actually collects 10000 in cash; the ledger pool reflects it.
+        $this->withHeaders($this->authHeaders($collector['user']))
+            ->postJson('/api/v1/festivals/' . $collector['festival']->id . '/vargani', [
+                'donorName' => 'Big Donor',
+                'amount' => 10000,
+                'paymentMode' => 'CASH',
+                'area' => 'Area 1',
+                'receiptType' => 'DIGITAL',
+            ])
+            ->assertStatus(201);
 
         $handover = CashHandover::create([
             'festival_id' => $collector['festival']->id,
@@ -76,6 +83,7 @@ $this->withHeaders($this->authHeaders($treasurer, [
             ])
             ->assertStatus(200);
 
+        $balance = FestivalBalance::where('festival_id', $collector['festival']->id)->first();
         $balance->refresh();
         $this->assertEquals(6000, (float) $balance->cash_collectors);
         $this->assertEquals(4000, (float) $balance->cash_treasurer);

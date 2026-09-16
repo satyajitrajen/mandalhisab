@@ -245,4 +245,56 @@ class VarganiContractTest extends TestCase
         $this->getJson('/api/v1/public/receipts/999999')
             ->assertStatus(404);
     }
+
+    public function test_cash_receipt_cancel_blocked_when_already_handed_over(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $treasurer = $this->makeMemberOf($ctx, 'TREASURER');
+        $treasurer->forceFill(['security_pin' => \Illuminate\Support\Facades\Hash::make('1234')])->save();
+
+        $headers = $this->authHeaders($ctx['user']);
+        $base = '/api/v1/festivals/' . $ctx['festival']->id;
+
+        $create = fn (float $amount) => $this->withHeaders($headers)
+            ->postJson($base . '/vargani', [
+                'donorName' => 'Donor ' . $amount,
+                'amount' => $amount,
+                'paymentMode' => 'CASH',
+                'area' => 'Area 1',
+                'receiptType' => 'DIGITAL',
+            ])
+            ->assertStatus(201)
+            ->json('data.id');
+
+        $handedOverReceipt = $create(500);
+        $keptReceipt = $create(200);
+
+        $handoverId = $this->withHeaders($headers)
+            ->postJson($base . '/funds/handovers', ['amount' => 500])
+            ->assertStatus(201)
+            ->json('data.id');
+
+        $this->withHeaders($this->authHeaders($treasurer, ['X-Festival-Id' => $ctx['festival']->id]))
+            ->postJson('/api/v1/funds/handovers/' . $handoverId . '/verify', [
+                'status' => 'VERIFIED_ACCEPTED',
+                'pin' => '1234',
+            ])
+            ->assertStatus(200);
+
+        // Cancelling the handed-over receipt would strand the accepted handover.
+        $this->withHeaders($headers)
+            ->postJson($base . '/vargani/' . $handedOverReceipt . '/cancel')
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'VALIDATION_FAILED');
+
+        $this->assertDatabaseHas('vargani_entries', [
+            'id' => $handedOverReceipt,
+            'is_cancelled' => false,
+        ]);
+
+        // The receipt still backed by the collector's own cash cancels fine.
+        $this->withHeaders($headers)
+            ->postJson($base . '/vargani/' . $keptReceipt . '/cancel')
+            ->assertStatus(200);
+    }
 }

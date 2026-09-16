@@ -96,9 +96,15 @@ class DomainNotificationTest extends TestCase
         $treasurer = $this->makeTreasurerOf($collector);
         $treasurer->forceFill(['security_pin' => Hash::make('1234')])->save();
 
-        $balance = FestivalBalance::where('festival_id', $collector['festival']->id)->first();
-        $balance->cash_collectors = 10000;
-        $balance->save();
+        $this->withHeaders($this->authHeaders($collector['user']))
+            ->postJson('/api/v1/festivals/'.$collector['festival']->id.'/vargani', [
+                'donorName' => 'Cash Donor',
+                'amount' => 10000,
+                'paymentMode' => 'CASH',
+                'area' => 'Area 1',
+                'receiptType' => 'DIGITAL',
+            ])
+            ->assertStatus(201);
 
         $handover = CashHandover::create([
             'festival_id' => $collector['festival']->id,

@@ -5,12 +5,14 @@ namespace App\Services;
 use App\Enums\FundBucket;
 use App\Enums\HandoverStatus;
 use App\Enums\MoneyTrailType;
+use App\Enums\PaymentMode;
 use App\Models\BankAccount;
 use App\Models\CashHandover;
 use App\Models\Festival;
 use App\Models\FestivalBalance;
 use App\Models\FundTransfer;
 use App\Models\MoneyTrailEntry;
+use App\Models\VarganiEntry;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 
@@ -128,6 +130,26 @@ class FundService
             $handover->save();
 
             if ($status === HandoverStatus::VERIFIED_ACCEPTED) {
+                // The pooled bucket can't tell whose cash is being handed over;
+                // cover the amount against this collector's own un-handed-over
+                // cash so one collector can't hand over another's collections.
+                $collected = (float) VarganiEntry::where('festival_id', $handover->festival_id)
+                    ->where('collector_id', $handover->from_user_id)
+                    ->where('is_cancelled', false)
+                    ->where('payment_mode', PaymentMode::CASH->value)
+                    ->sum('amount');
+                $alreadyHandedOver = (float) CashHandover::where('festival_id', $handover->festival_id)
+                    ->where('from_user_id', $handover->from_user_id)
+                    ->whereKeyNot($handover->id)
+                    ->where('status', HandoverStatus::VERIFIED_ACCEPTED)
+                    ->sum('amount');
+
+                if ((float) $handover->amount > $collected - $alreadyHandedOver + 0.001) {
+                    throw new \InvalidArgumentException(
+                        'Collector has insufficient un-handed-over cash for this handover.'
+                    );
+                }
+
                 $balance = FestivalBalance::lockForUpdate()
                     ->where('festival_id', $handover->festival_id)
                     ->first() ?? FestivalBalance::forFestival($handover->festival_id);

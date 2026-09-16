@@ -2,9 +2,11 @@
 
 namespace App\Services;
 
+use App\Enums\HandoverStatus;
 use App\Enums\MoneyTrailType;
 use App\Enums\PaymentMode;
 use App\Enums\VarganiReceiptType;
+use App\Models\CashHandover;
 use App\Models\Festival;
 use App\Models\FestivalBalance;
 use App\Models\MoneyTrailEntry;
@@ -112,6 +114,27 @@ class VarganiService
     {
         if ($entry->is_cancelled) {
             throw new \InvalidArgumentException('Receipt is already cancelled');
+        }
+
+        // Cancelling a cash receipt whose money has already been handed over
+        // would drive the collectors' pool negative; the reversal must be
+        // settled through the handover flow instead.
+        if ($entry->payment_mode === PaymentMode::CASH) {
+            $collected = (float) VarganiEntry::where('festival_id', $entry->festival_id)
+                ->where('collector_id', $entry->collector_id)
+                ->where('is_cancelled', false)
+                ->where('payment_mode', PaymentMode::CASH->value)
+                ->sum('amount');
+            $handedOver = (float) CashHandover::where('festival_id', $entry->festival_id)
+                ->where('from_user_id', $entry->collector_id)
+                ->where('status', HandoverStatus::VERIFIED_ACCEPTED)
+                ->sum('amount');
+
+            if ($handedOver > $collected - (float) $entry->amount + 0.001) {
+                throw new \InvalidArgumentException(
+                    'This receipt has already been included in a verified handover and cannot be cancelled.'
+                );
+            }
         }
 
         return DB::transaction(function () use ($entry, $notes, $userId) {

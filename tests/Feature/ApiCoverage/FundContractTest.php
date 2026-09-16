@@ -188,9 +188,15 @@ class FundContractTest extends TestCase
         $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
         $ctx['user']->forceFill(['security_pin' => Hash::make('1234')])->save();
 
-        $balance = FestivalBalance::where('festival_id', $ctx['festival']->id)->first();
-        $balance->cash_collectors = 10000;
-        $balance->save();
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani', [
+                'donorName' => 'Cash Donor',
+                'amount' => 10000,
+                'paymentMode' => 'CASH',
+                'area' => 'Area 1',
+                'receiptType' => 'DIGITAL',
+            ])
+            ->assertStatus(201);
 
         $handover = CashHandover::create([
             'festival_id' => $ctx['festival']->id,
@@ -237,9 +243,15 @@ class FundContractTest extends TestCase
         $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
         $ctx['user']->forceFill(['security_pin' => Hash::make('1234')])->save();
 
-        $balance = FestivalBalance::where('festival_id', $ctx['festival']->id)->first();
-        $balance->cash_collectors = 1000;
-        $balance->save();
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani', [
+                'donorName' => 'Cash Donor',
+                'amount' => 1000,
+                'paymentMode' => 'CASH',
+                'area' => 'Area 1',
+                'receiptType' => 'DIGITAL',
+            ])
+            ->assertStatus(201);
 
         $handover = CashHandover::create([
             'festival_id' => $ctx['festival']->id,
@@ -260,7 +272,7 @@ class FundContractTest extends TestCase
             ->assertJsonPath('error.code', 'VALIDATION_FAILED');
 
         // Rejected verify must leave the ledger untouched.
-        $balance->refresh();
+        $balance = FestivalBalance::where('festival_id', $ctx['festival']->id)->first();
         $this->assertEquals(1000, (float) $balance->cash_collectors);
         $this->assertEquals(0, (float) $balance->cash_treasurer);
         $this->assertDatabaseHas('cash_handovers', [
@@ -301,5 +313,77 @@ class FundContractTest extends TestCase
                 'amount' => 1000,
             ])
             ->assertStatus(201);
+    }
+
+    public function test_handover_cannot_exceed_collectors_own_cash(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $treasurer = $this->makeTreasurerOf($ctx);
+        $treasurer->forceFill(['security_pin' => Hash::make('1234')])->save();
+
+        // The ctx collector actually collects 1000 in cash.
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani', [
+                'donorName' => 'Rich Donor',
+                'amount' => 1000,
+                'paymentMode' => 'CASH',
+                'area' => 'Area 1',
+                'receiptType' => 'DIGITAL',
+            ])
+            ->assertStatus(201);
+
+        // A second collector with zero collections tries to hand over 500.
+        $broke = \App\Models\User::factory()->create();
+        \App\Models\MandalMember::create([
+            'mandal_id' => $ctx['mandal']->id,
+            'user_id' => $broke->id,
+            'role' => 'COLLECTOR',
+            'is_default' => false,
+            'is_active' => true,
+            'joined_at' => now(),
+        ]);
+
+        $handoverId = $this->withHeaders($this->authHeaders($broke))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers', [
+                'amount' => 500,
+            ])
+            ->assertStatus(201)
+            ->json('data.id');
+
+        $this->withHeaders($this->authHeaders($treasurer, ['X-Festival-Id' => $ctx['festival']->id]))
+            ->postJson('/api/v1/funds/handovers/' . $handoverId . '/verify', [
+                'status' => 'VERIFIED_ACCEPTED',
+                'pin' => '1234',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'VALIDATION_FAILED');
+
+        // Pool untouched — the pooled 1000 belongs to the first collector.
+        $balance = FestivalBalance::where('festival_id', $ctx['festival']->id)->first();
+        $this->assertEquals(1000, (float) $balance->cash_collectors);
+        $this->assertEquals(0, (float) $balance->cash_treasurer);
+        $this->assertDatabaseHas('cash_handovers', [
+            'id' => $handoverId,
+            'status' => HandoverStatus::PENDING_APPROVAL->value,
+        ]);
+
+        // The collector who actually holds the cash can still hand over.
+        $ownId = $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers', [
+                'amount' => 400,
+            ])
+            ->assertStatus(201)
+            ->json('data.id');
+
+        $this->withHeaders($this->authHeaders($treasurer, ['X-Festival-Id' => $ctx['festival']->id]))
+            ->postJson('/api/v1/funds/handovers/' . $ownId . '/verify', [
+                'status' => 'VERIFIED_ACCEPTED',
+                'pin' => '1234',
+            ])
+            ->assertStatus(200);
+
+        $balance->refresh();
+        $this->assertEquals(600, (float) $balance->cash_collectors);
+        $this->assertEquals(400, (float) $balance->cash_treasurer);
     }
 }
