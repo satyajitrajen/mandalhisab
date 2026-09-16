@@ -1,14 +1,17 @@
 <?php
 
+use App\Http\Middleware\AuthenticateJwt;
+use App\Http\Middleware\HisabLocked;
+use App\Http\Middleware\IdempotencyGuard;
+use App\Http\Middleware\RateLimit;
+use App\Http\Middleware\RequireRegistrationPaid;
+use App\Http\Middleware\RequireRole;
+use App\Http\Middleware\TenantScope;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
-use App\Http\Middleware\AuthenticateJwt;
-use App\Http\Middleware\TenantScope;
-use App\Http\Middleware\RequireRole;
-use App\Http\Middleware\IdempotencyGuard;
-use App\Http\Middleware\RateLimit;
-use App\Http\Middleware\HisabLocked;
+use Illuminate\Routing\Middleware\SubstituteBindings;
+use Illuminate\Validation\ValidationException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -26,19 +29,21 @@ return Application::configure(basePath: dirname(__DIR__))
             'idempotency' => IdempotencyGuard::class,
             'rate.limit' => RateLimit::class,
             'hisab.locked' => HisabLocked::class,
+            'registration.paid' => RequireRegistrationPaid::class,
         ]);
 
         $middleware->api(prepend: [
             // Ensure JSON requests are handled properly
-            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+            SubstituteBindings::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         // Handle validation errors (422)
-        $exceptions->renderable(function (\Illuminate\Validation\ValidationException $e, $request) {
+        $exceptions->renderable(function (ValidationException $e, $request) {
             if ($request->is('api/*')) {
                 $errors = collect($e->errors())->flatten()->map(function ($message, $index) use ($e) {
                     $field = array_keys($e->errors())[$index] ?? 'field';
+
                     return [
                         'field' => $field,
                         'issue' => $message,
@@ -59,10 +64,10 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         // Generic API exception handler
-        $exceptions->renderable(function (\Throwable $e, $request) {
+        $exceptions->renderable(function (Throwable $e, $request) {
             if ($request->is('api/*')) {
                 $status = method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 500;
-                if ($e instanceof \Illuminate\Validation\ValidationException) {
+                if ($e instanceof ValidationException) {
                     return null; // Let the dedicated handler above process it
                 }
                 $code = class_basename($e);

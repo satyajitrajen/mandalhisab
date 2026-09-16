@@ -17,14 +17,14 @@ class ConfigController
     {
         $config = [
             'appName' => 'MandalHisab',
-            'minSupportedVersion' => '2.0.0',
-            'latestVersion' => '2.1.0',
-            'forceUpdate' => false,
+            'minSupportedVersion' => config('app.min_supported_version', '1.0.0'),
+            'latestVersion' => config('app.latest_version', '1.0.0'),
+            'forceUpdate' => (bool) config('app.force_update', false),
             'maintenanceMode' => false,
             'maintenanceMessage' => null,
             'supportPhone' => '+91-XXXXXXXXXX',
             'supportEmail' => 'support@mandalhisab.in',
-            'apiBaseUrl' => config('app.url') . '/api/v1',
+            'apiBaseUrl' => config('app.url').'/api/v1',
             'features' => [
                 'offlineSyncEnabled' => true,
                 'biometricSecurityEnabled' => true,
@@ -47,6 +47,16 @@ class ConfigController
                 'language' => 'en',
                 'dateFormat' => 'd MMM yyyy',
                 'timeFormat' => 'hh:mm a',
+            ],
+            'razorpay' => [
+                'keyId' => config('services.razorpay.key_id'),
+                'registrationAmountPaise' => (int) config('services.razorpay.registration_amount_paise', 10100),
+                'currency' => config('services.razorpay.currency', 'INR'),
+            ],
+            'fcm' => [
+                'enabled' => (bool) filter_var(config('services.fcm.enabled', false), FILTER_VALIDATE_BOOLEAN),
+                'projectId' => config('services.fcm.project_id'),
+                'credentialsPresent' => is_file(base_path((string) config('services.fcm.credentials', ''))),
             ],
         ];
 

@@ -1211,7 +1211,7 @@ class GetMember
 #[OA\Patch(
     path: '/mandals/{mandalId}/members/{memberUserId}',
     operationId: 'updateMember',
-    summary: 'Update member role/area/active state (ADMIN)',
+    summary: 'Update member name/phone/role/area/active state (ADMIN)',
     security: [['bearerAuth' => []]],
     tags: ['Members'],
     parameters: [
@@ -1220,14 +1220,16 @@ class GetMember
     ],
     requestBody: new OA\RequestBody(required: true,
         content: new OA\JsonContent(properties: [
+            new OA\Property(property: 'fullName', type: 'string', description: '2-80 chars'),
+            new OA\Property(property: 'phone', type: 'string', description: '10-digit Indian mobile'),
             new OA\Property(property: 'role', type: 'string', enum: ['ADMIN', 'TREASURER', 'COLLECTOR', 'MEMBER']),
             new OA\Property(property: 'area', type: 'string'),
-            new OA\Property(property: 'isActive', type: 'boolean'),
+            new OA\Property(property: 'isActive', type: 'boolean', description: 'false deactivates, true reactivates'),
         ])),
     responses: [
         new OA\Response(response: 200, description: 'Member updated',
             content: new OA\JsonContent(ref: '#/components/schemas/Member')),
-        new OA\Response(response: 422, description: 'Cannot remove last ADMIN',
+        new OA\Response(response: 422, description: 'Cannot remove last ADMIN / phone in use',
             content: new OA\JsonContent(ref: '#/components/schemas/ErrorResponse')),
     ],
 )]
@@ -1272,6 +1274,49 @@ class MemberFinancialSummaryOperation
     ],
 )]
 class DeactivateMember
+{
+}
+
+#[OA\Post(
+    path: '/mandals/{mandalId}/members/{memberUserId}/reactivate',
+    operationId: 'reactivateMember',
+    summary: 'Reactivate a soft-deactivated member (ADMIN)',
+    security: [['bearerAuth' => []]],
+    tags: ['Members'],
+    parameters: [
+        new OA\Parameter(name: 'mandalId', in: 'path', required: true, schema: new OA\Schema(type: 'string')),
+        new OA\Parameter(name: 'memberUserId', in: 'path', required: true, schema: new OA\Schema(type: 'string')),
+    ],
+    responses: [
+        new OA\Response(response: 200, description: 'Member reactivated',
+            content: new OA\JsonContent(ref: '#/components/schemas/Member')),
+    ],
+)]
+class ReactivateMember
+{
+}
+
+#[OA\Post(
+    path: '/mandals/{mandalId}/members/{memberUserId}/reset-login',
+    operationId: 'resetMemberLogin',
+    summary: 'Re-issue a one-time temporary password for a member (ADMIN)',
+    security: [['bearerAuth' => []]],
+    tags: ['Members'],
+    parameters: [
+        new OA\Parameter(name: 'mandalId', in: 'path', required: true, schema: new OA\Schema(type: 'string')),
+        new OA\Parameter(name: 'memberUserId', in: 'path', required: true, schema: new OA\Schema(type: 'string')),
+    ],
+    responses: [
+        new OA\Response(response: 200, description: 'Login reset; returns one-time credentials',
+            content: new OA\JsonContent(properties: [
+                new OA\Property(property: 'memberId', type: 'string'),
+                new OA\Property(property: 'username', type: 'string'),
+                new OA\Property(property: 'phone', type: 'string'),
+                new OA\Property(property: 'temporaryPassword', type: 'string'),
+            ])),
+    ],
+)]
+class ResetMemberLogin
 {
 }
 

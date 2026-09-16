@@ -16,6 +16,8 @@ use Illuminate\Support\Facades\DB;
 
 class FundService
 {
+    public function __construct(protected NotificationService $notifications) {}
+
     /**
      * Read summary buckets from the explicit FestivalBalance ledger (O(1)).
      */
@@ -63,7 +65,7 @@ class FundService
      */
     public function createHandover(string $festivalId, array $data, string $fromUserId): CashHandover
     {
-        return DB::transaction(function () use ($festivalId, $data, $fromUserId) {
+        $handover = DB::transaction(function () use ($festivalId, $data, $fromUserId) {
             $toUserId = $data['to_user_id'] ?? null;
             if (! $toUserId) {
                 $festival = Festival::find($festivalId);
@@ -92,6 +94,10 @@ class FundService
 
             return $handover;
         });
+
+        $this->notifications->notifyHandoverInitiated($handover);
+
+        return $handover;
     }
 
     /**
@@ -100,8 +106,14 @@ class FundService
      */
     public function verifyHandover(string $handoverId, string $action, string $authMethod, ?string $notes = null): CashHandover
     {
-        return DB::transaction(function () use ($handoverId, $action, $authMethod, $notes) {
+        $handover = DB::transaction(function () use ($handoverId, $action, $authMethod, $notes) {
             $handover = CashHandover::lockForUpdate()->findOrFail($handoverId);
+
+            // A re-accept would re-move the buckets and duplicate the trail
+            // entry; a re-reject would silently flip a settled outcome.
+            if (in_array($handover->status, [HandoverStatus::VERIFIED_ACCEPTED, HandoverStatus::REJECTED], true)) {
+                throw new \InvalidArgumentException('Handover has already been verified and cannot be changed.');
+            }
 
             $status = match ($action) {
                 'accept' => HandoverStatus::VERIFIED_ACCEPTED,
@@ -116,7 +128,16 @@ class FundService
             $handover->save();
 
             if ($status === HandoverStatus::VERIFIED_ACCEPTED) {
-                $balance = FestivalBalance::forFestival($handover->festival_id);
+                $balance = FestivalBalance::lockForUpdate()
+                    ->where('festival_id', $handover->festival_id)
+                    ->first() ?? FestivalBalance::forFestival($handover->festival_id);
+
+                if ((float) $balance->cash_collectors < (float) $handover->amount) {
+                    throw new \InvalidArgumentException(
+                        'Collector cash balance is insufficient for this handover.'
+                    );
+                }
+
                 $balance->addToBucket('cash_collectors', -(float) $handover->amount);
                 $balance->addToBucket('cash_treasurer', (float) $handover->amount);
 
@@ -134,6 +155,10 @@ class FundService
 
             return $handover;
         });
+
+        $this->notifications->notifyHandoverVerified($handover);
+
+        return $handover;
     }
 
     /**
@@ -174,6 +199,10 @@ class FundService
             $fromBucket = FundBucket::from($data['from_bucket']);
             $toBucket = FundBucket::from($data['to_bucket']);
             $amount = (float) $data['amount'];
+
+            if ($fromBucket === $toBucket) {
+                throw new \InvalidArgumentException('Source and destination buckets must be different.');
+            }
 
             $bucketMap = [
                 FundBucket::CASH_TREASURER->value => 'cash_treasurer',

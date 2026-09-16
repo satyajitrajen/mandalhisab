@@ -47,16 +47,7 @@ class AreaController
      */
     public function store(Request $request, $mandal)
     {
-        $user = $request->user();
-
-        $membership = MandalMember::where('mandal_id', $mandal)
-            ->where('user_id', $user->id)
-            ->where('is_active', true)
-            ->first();
-
-        if (! $membership || ! in_array($membership->role?->value ?? $membership->role, ['ADMIN', 'TREASURER'])) {
-            return $this->error('FORBIDDEN', 'Only admins and treasurers can manage areas', 403);
-        }
+        $this->assertCanManage($request, $mandal);
 
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:100'],
@@ -88,6 +79,8 @@ class AreaController
             return $this->error('NOT_FOUND', 'Area not found', 404);
         }
 
+        $this->assertCanManage($request, $area->mandal_id);
+
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:100'],
             'wardNumber' => ['nullable', 'string', 'max:50'],
@@ -117,8 +110,35 @@ class AreaController
             return $this->error('NOT_FOUND', 'Area not found', 404);
         }
 
+        $this->assertCanManage($request, $area->mandal_id);
+
         $area->delete();
 
         return $this->success(null, 'Area deleted successfully');
+    }
+
+    /**
+     * Ensure the caller is an active ADMIN/TREASURER of the area's mandal.
+     */
+    protected function assertCanManage(Request $request, string $mandalId): void
+    {
+        $membership = MandalMember::where('mandal_id', $mandalId)
+            ->where('user_id', $request->user()->id)
+            ->where('is_active', true)
+            ->first();
+
+        $role = $membership?->role;
+        $roleValue = $role instanceof \BackedEnum ? $role->value : $role;
+
+        if (! $membership || ! in_array($roleValue, ['ADMIN', 'TREASURER', 'SUPER_ADMIN'], true)) {
+            abort(response()->json([
+                'success' => false,
+                'statusCode' => 403,
+                'error' => [
+                    'code' => 'FORBIDDEN',
+                    'message' => 'Only admins and treasurers can manage areas',
+                ],
+            ], 403));
+        }
     }
 }

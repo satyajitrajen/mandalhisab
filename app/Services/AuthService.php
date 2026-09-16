@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\MemberRole;
+use App\Mail\PasswordResetLinkMail;
 use App\Models\DeviceToken;
 use App\Models\Mandal;
 use App\Models\MandalMember;
@@ -11,6 +12,10 @@ use App\Models\RefreshSession;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
+use Throwable;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 class AuthService
@@ -23,13 +28,20 @@ class AuthService
         return DB::transaction(function () use ($data) {
             $input = $data['usernameOrPhone'];
             $phone = $this->extractPhone($input);
-            $username = $phone ? null : strtolower(trim($input));
+            if (! $phone) {
+                throw new \InvalidArgumentException('Enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
+            }
+
+            $email = strtolower(trim((string) ($data['email'] ?? '')));
+            if ($email === '' || ! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                throw new \InvalidArgumentException('A valid email is required.');
+            }
 
             $user = User::create([
                 'full_name' => $data['fullName'],
-                'username' => $username,
+                'username' => $phone,
                 'phone' => $phone,
-                'email' => $data['email'] ?? null,
+                'email' => $email,
                 'password' => $data['password'],
                 'default_language' => $data['defaultLanguage'] ?? 'en',
             ]);
@@ -61,6 +73,8 @@ class AuthService
 
             $tokens = $this->issueTokens($user);
 
+            $user->load('mandalMembers.mandal');
+
             return [
                 'user' => $this->formatUser($user),
                 'access_token' => $tokens['access_token'],
@@ -75,15 +89,7 @@ class AuthService
      */
     public function login(array $data): array
     {
-        $input = strtolower(trim($data['usernameOrPhone']));
-        $phone = $this->extractPhone($input);
-
-        $user = User::where(function ($q) use ($input, $phone) {
-            $q->whereRaw('LOWER(username) = ?', [$input]);
-            if ($phone) {
-                $q->orWhere('phone', $phone);
-            }
-        })->first();
+        $user = $this->findAccount((string) $data['usernameOrPhone']);
 
         if (! $user || ! Hash::check($data['password'], $user->password)) {
             throw new \Exception('Invalid credentials');
@@ -98,6 +104,7 @@ class AuthService
         }
 
         $tokens = $this->issueTokens($user);
+        $user->load('mandalMembers.mandal');
 
         return [
             'user' => $this->formatUser($user),
@@ -164,16 +171,21 @@ class AuthService
      */
     public function setPin(User $user, string $pin, array $validation): void
     {
+        $hasExistingPin = ! empty($user->security_pin);
         $valid = false;
 
         if (! empty($validation['currentPassword'])) {
             $valid = Hash::check($validation['currentPassword'], $user->password);
-        } elseif (! empty($validation['currentPin'])) {
+        } elseif ($hasExistingPin && ! empty($validation['currentPin'])) {
             $valid = Hash::check($validation['currentPin'], $user->security_pin);
         }
 
         if (! $valid) {
-            throw new \Exception('Current password or PIN is incorrect');
+            throw new \Exception(
+                $hasExistingPin
+                    ? 'Current password or PIN is incorrect'
+                    : 'Account password is required to set a PIN for the first time'
+            );
         }
 
         $user->security_pin = $pin;
@@ -194,79 +206,86 @@ class AuthService
     }
 
     /**
-     * Start a password reset: issue a 6-digit OTP for the account's
-     * username or phone. The OTP is stored hashed and expires in 10 minutes.
-     *
-     * Note: with no SMS gateway wired up, the OTP is returned in the response
-     * and logged. Swap `return $otp` for a real SMS/email send in production.
+     * Start a password reset: issue a single-use token and email a reset link.
+     * The raw token is never returned in the API response.
      */
     public function forgotPassword(string $usernameOrPhone): array
     {
-        $input = strtolower(trim($usernameOrPhone));
-        $phone = $this->extractPhone($input);
-
-        $user = User::where(function ($q) use ($input, $phone) {
-            $q->whereRaw('LOWER(username) = ?', [$input]);
-            if ($phone) {
-                $q->orWhere('phone', $phone);
-            }
-        })->first();
+        $user = $this->findAccount($usernameOrPhone);
 
         if (! $user) {
-            throw new \Exception('No account found for this username or phone');
+            throw new \Exception('No account found for this mobile number or email');
         }
 
-        // Invalidate any previous outstanding OTP for this user.
+        if (! $user->email) {
+            throw new \InvalidArgumentException('This account has no email. Add an email on your profile, then try again.');
+        }
+
         PasswordResetToken::where('user_id', $user->id)
             ->whereNull('used_at')
             ->update(['used_at' => now()]);
 
-        $otp = (string) random_int(100000, 999999);
+        $token = bin2hex(random_bytes(32));
 
         PasswordResetToken::create([
             'user_id' => $user->id,
-            'token_hash' => Hash::make($otp),
-            'expires_at' => now()->addMinutes(10),
+            'token_hash' => hash('sha256', $token),
+            'expires_at' => now()->addMinutes(60),
         ]);
 
-        \Illuminate\Support\Facades\Log::info('Password reset OTP for ' . ($user->username ?? $user->phone) . ": {$otp}");
+        $resetUrl = rtrim((string) config('app.url'), '/')
+            .'/reset-password?token='.$token;
+
+        try {
+            Mail::to($user->email)->send(
+                new PasswordResetLinkMail($token, $user->full_name ?: 'Member', $resetUrl)
+            );
+        } catch (Throwable $e) {
+            Log::error('Password reset email failed', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+            throw new \RuntimeException('Could not send the reset email. Try again or contact support.');
+        }
+
+        Log::info('Password reset link emailed', [
+            'user_id' => $user->id,
+            'sent_to' => $this->maskEmail($user->email),
+        ]);
 
         return [
-            'expiresInMinutes' => 10,
-            'otp' => $otp,
+            'expiresInMinutes' => 60,
+            'sentTo' => $this->maskEmail($user->email),
         ];
     }
 
     /**
-     * Complete a password reset with the OTP from [forgotPassword].
+     * Complete a password reset with the single-use token from [forgotPassword].
      */
-    public function resetPassword(string $usernameOrPhone, string $otp, string $newPassword): void
+    public function resetPassword(string $token, string $newPassword): void
     {
-        $input = strtolower(trim($usernameOrPhone));
-        $phone = $this->extractPhone($input);
-
-        $user = User::where(function ($q) use ($input, $phone) {
-            $q->whereRaw('LOWER(username) = ?', [$input]);
-            if ($phone) {
-                $q->orWhere('phone', $phone);
-            }
-        })->first();
-
-        if (! $user) {
-            throw new \Exception('No account found for this username or phone');
-        }
-
-        $record = PasswordResetToken::where('user_id', $user->id)
+        $record = PasswordResetToken::where('token_hash', hash('sha256', $token))
             ->whereNull('used_at')
             ->where('expires_at', '>', now())
-            ->orderByDesc('created_at')
             ->first();
 
-        if (! $record || ! Hash::check($otp, $record->token_hash)) {
-            throw new \Exception('Invalid or expired OTP');
+        if (! $record) {
+            throw new \Exception('Invalid or expired reset link');
+        }
+
+        $user = $record->user;
+
+        if (! $user || $user->deleted_at !== null) {
+            throw new \Exception('Invalid or expired reset link');
         }
 
         $record->update(['used_at' => now()]);
+
+        // Invalidate any other outstanding reset tokens for this account.
+        PasswordResetToken::where('user_id', $user->id)
+            ->whereNull('used_at')
+            ->update(['used_at' => now()]);
+
         $user->password = $newPassword;
         $user->save();
 
@@ -279,6 +298,18 @@ class AuthService
      */
     public function updateProfile(User $user, array $data): User
     {
+        if (! empty($data['email'])) {
+            $email = strtolower(trim((string) $data['email']));
+            $taken = User::query()
+                ->where('email', $email)
+                ->where('id', '!=', $user->id)
+                ->exists();
+            if ($taken) {
+                throw new \InvalidArgumentException('This email is already registered.');
+            }
+            $data['email'] = $email;
+        }
+
         $fillable = [
             'full_name' => $data['name'] ?? null,
             'email' => $data['email'] ?? null,
@@ -302,20 +333,50 @@ class AuthService
 
     public function extractPhone(string $input): ?string
     {
-        $digits = preg_replace('/\D/', '', $input);
-        if (strlen($digits) === 10) {
+        $digits = preg_replace('/\D/', '', $input) ?? '';
+
+        if (strlen($digits) === 12 && str_starts_with($digits, '91')) {
+            $digits = substr($digits, 2);
+        } elseif (strlen($digits) === 11 && str_starts_with($digits, '0')) {
+            $digits = substr($digits, 1);
+        }
+
+        if (preg_match('/^[6-9]\d{9}$/', $digits) === 1) {
             return $digits;
         }
-        if (strlen($digits) === 11 && str_starts_with($digits, '0')) {
-            return substr($digits, 1);
-        }
-        if (strlen($digits) === 12 && str_starts_with($digits, '91')) {
-            return substr($digits, 2);
-        }
-        if (strlen($digits) > 10) {
-            return substr($digits, -10);
-        }
+
         return null;
+    }
+
+    public function findAccount(string $input): ?User
+    {
+        $normalized = strtolower(trim($input));
+        $phone = $this->extractPhone($input);
+        $email = filter_var($normalized, FILTER_VALIDATE_EMAIL) ?: null;
+
+        return User::query()
+            ->where(function ($q) use ($normalized, $phone, $email) {
+                $q->whereRaw('LOWER(username) = ?', [$normalized]);
+                if ($phone) {
+                    $q->orWhere('phone', $phone);
+                }
+                if ($email) {
+                    $q->orWhere('email', $email);
+                }
+            })
+            ->first();
+    }
+
+    public function maskEmail(string $email): string
+    {
+        [$local, $domain] = array_pad(explode('@', $email, 2), 2, '');
+        if ($domain === '') {
+            return '***';
+        }
+
+        $visible = substr($local, 0, 1);
+
+        return $visible.'***@'.$domain;
     }
 
     protected function issueTokens(User $user): array
@@ -345,21 +406,40 @@ class AuthService
 
     public function formatUser(User $user): array
     {
+        $user->loadMissing('mandalMembers.mandal');
+
+        $unpaidAdmin = $user->mandalMembers->first(function ($mm) {
+            return $mm->is_active
+                && in_array($mm->role, [MemberRole::ADMIN, MemberRole::SUPER_ADMIN], true)
+                && $mm->mandal
+                && $mm->mandal->registration_paid_at === null;
+        });
+
+        $deletionService = app(AccountDeletionService::class);
+        $pendingDeletion = $deletionService->formatPending($deletionService->pendingFor($user));
+
         return [
             'id' => $user->id,
             'name' => $user->full_name,
-            'phone' => $user->phone ? '+91' . $user->phone : null,
+            'phone' => $user->phone ? '+91'.$user->phone : null,
             'email' => $user->email,
             'avatarUrl' => $user->avatar_url,
             'initials' => $user->initials,
             'defaultLanguage' => $user->default_language,
             'isBiometricEnabled' => $user->is_biometric_enabled,
             'activeFestivalId' => $user->active_festival_id,
+            'accountDeletion' => $pendingDeletion,
+            'registrationPaymentRequired' => $unpaidAdmin !== null,
+            'unpaidMandal' => $unpaidAdmin ? [
+                'id' => $unpaidAdmin->mandal_id,
+                'name' => $unpaidAdmin->mandal->name ?? null,
+            ] : null,
             'mandals' => $user->mandalMembers->map(fn ($mm) => [
                 'id' => $mm->mandal_id,
                 'name' => $mm->mandal->name ?? null,
                 'role' => $mm->role->value,
                 'isDefault' => $mm->is_default,
+                'registrationPaid' => $mm->mandal?->registration_paid_at !== null,
             ])->toArray(),
         ];
     }
@@ -367,8 +447,9 @@ class AuthService
     protected function storeAvatar(string $base64): string
     {
         $data = base64_decode(explode(',', $base64)[1] ?? $base64);
-        $path = 'avatars/' . uniqid() . '.png';
-        \Illuminate\Support\Facades\Storage::disk('public')->put($path, $data);
-        return asset('storage/' . $path);
+        $path = 'avatars/'.uniqid().'.png';
+        Storage::disk('public')->put($path, $data);
+
+        return asset('storage/'.$path);
     }
 }

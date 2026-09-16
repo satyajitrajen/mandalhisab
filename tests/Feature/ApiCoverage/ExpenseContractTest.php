@@ -6,6 +6,8 @@ use App\Enums\ExpenseStatus;
 use App\Enums\MemberRole;
 use App\Enums\PaymentMode;
 use App\Models\ExpenseEntry;
+use App\Models\FestivalBalance;
+use App\Models\FinalHisabAudit;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Tests\Support\JwtAuth;
@@ -65,14 +67,10 @@ class ExpenseContractTest extends TestCase
     {
         $ctx = $this->makeFestivalContext(MemberRole::MEMBER->value);
         $expense = $this->makeExpense($ctx);
-        fwrite(STDERR, "\nDBG expense id={$expense->id} exists=" . var_export($expense->exists, true) . " festival={$ctx['festival']->id} eid={$expense->festival_id}\n");
-        fwrite(STDERR, "\nDBG rows=" . \App\Models\ExpenseEntry::count() . "\n");
 
-        fwrite(STDERR, "\nDBG2 find=" . var_export(ExpenseEntry::find($expense->id)?->id, true) . "\n");
-        $response = $this->withHeaders($this->authHeaders($ctx['user']))
-            ->getJson('/api/v1/festivals/' . $ctx['festival']->id . '/expenses/' . $expense->id);
-        fwrite(STDERR, "\nDBG status=" . $response->getStatusCode() . " body=" . $response->getContent() . "\n");
-        $response->assertStatus(200)
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->getJson('/api/v1/festivals/' . $ctx['festival']->id . '/expenses/' . $expense->id)
+            ->assertStatus(200)
             ->assertJsonPath('data.id', $expense->id);
     }
 
@@ -89,7 +87,7 @@ class ExpenseContractTest extends TestCase
 
     public function test_store_creates_expense_and_trail(): void
     {
-        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $ctx = $this->makeFestivalContext(MemberRole::ADMIN->value);
         $this->assertDatabaseMissing('expense_entries', ['title' => 'Prasad' ]);
 
         $this->withHeaders($this->authHeaders($ctx['user']))
@@ -102,7 +100,7 @@ class ExpenseContractTest extends TestCase
 
     public function test_update_edits_expense_fields(): void
     {
-        $ctx = $this->makeFestivalContext(MemberRole::MEMBER->value);
+        $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
         $expense = $this->makeExpense($ctx);
 
         $this->withHeaders($this->authHeaders($ctx['user']))
@@ -116,7 +114,7 @@ class ExpenseContractTest extends TestCase
 
     public function test_bill_upload_accepts_pdf(): void
     {
-        $ctx = $this->makeFestivalContext(MemberRole::MEMBER->value);
+        $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
         $expense = $this->makeExpense($ctx);
 
         $this->withHeaders($this->authHeaders($ctx['user']))
@@ -129,8 +127,13 @@ class ExpenseContractTest extends TestCase
 
     public function test_mark_paid_flips_status(): void
     {
-        $ctx = $this->makeFestivalContext(MemberRole::MEMBER->value);
+        $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
         $expense = $this->makeExpense($ctx);
+
+        // Marking a CASH expense paid debits the treasurer's cash bucket.
+        $balance = FestivalBalance::where('festival_id', $ctx['festival']->id)->first();
+        $balance->cash_treasurer = 20000;
+        $balance->save();
 
         $this->withHeaders($this->authHeaders($ctx['user']))
             ->patchJson('/api/v1/festivals/' . $ctx['festival']->id . '/expenses/' . $expense->id . '/mark-paid')
@@ -140,6 +143,58 @@ class ExpenseContractTest extends TestCase
         $this->assertDatabaseHas('expense_entries', [
             'id' => $expense->id,
             'status' => ExpenseStatus::PAID->value,
+        ]);
+    }
+
+    public function test_member_cannot_create_or_edit_expenses(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::MEMBER->value);
+        $expense = $this->makeExpense($ctx);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/expenses', $this->expensePayload())
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'FORBIDDEN');
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->patchJson('/api/v1/festivals/' . $ctx['festival']->id . '/expenses/' . $expense->id, [
+                'amount' => 18000,
+            ])
+            ->assertStatus(403);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->patchJson('/api/v1/festivals/' . $ctx['festival']->id . '/expenses/' . $expense->id . '/mark-paid')
+            ->assertStatus(403);
+    }
+
+    public function test_update_rejects_expense_from_another_festival(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
+        // Same user is treasurer in a second mandal whose festival is locked;
+        // referencing it through the unlocked festival path must fail.
+        $lockedCtx = $this->makeFestivalContext(MemberRole::TREASURER->value, $ctx['user']);
+        FinalHisabAudit::create([
+            'festival_id' => $lockedCtx['festival']->id,
+            'opening_balance' => 0,
+            'vargani_total' => 0,
+            'other_income_total' => 0,
+            'total_income' => 0,
+            'total_expenses' => 0,
+            'closing_balance' => 0,
+            'is_locked' => true,
+        ]);
+
+        $expense = $this->makeExpense($lockedCtx);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->patchJson('/api/v1/festivals/' . $ctx['festival']->id . '/expenses/' . $expense->id, [
+                'title' => 'Tampered',
+            ])
+            ->assertStatus(404);
+
+        $this->assertDatabaseHas('expense_entries', [
+            'id' => $expense->id,
+            'title' => 'Stage Lighting',
         ]);
     }
 }

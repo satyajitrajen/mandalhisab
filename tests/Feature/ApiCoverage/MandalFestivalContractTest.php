@@ -5,6 +5,7 @@ namespace Tests\Feature\ApiCoverage;
 use App\Enums\MemberRole;
 use App\Models\Mandal;
 use App\Models\Festival;
+use App\Models\MandalArea;
 use App\Models\MandalMember;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -190,6 +191,49 @@ class MandalFestivalContractTest extends TestCase
                     'recentTransactions' => [],
                 ],
             ]);
+    }
+
+    public function test_area_update_and_delete_require_management_role(): void
+    {
+        $adminCtx = $this->makeFestivalContext(MemberRole::ADMIN->value);
+        $area = MandalArea::create([
+            'mandal_id' => $adminCtx['mandal']->id,
+            'name' => 'Ward 1',
+        ]);
+
+        // An admin of a different mandal must not touch this area.
+        $outsiderCtx = $this->makeFestivalContext(MemberRole::ADMIN->value);
+        $this->withHeaders($this->authHeaders($outsiderCtx['user']))
+            ->putJson('/api/v1/areas/' . $area->id, ['name' => 'Hijacked'])
+            ->assertStatus(403);
+        $this->withHeaders($this->authHeaders($outsiderCtx['user']))
+            ->deleteJson('/api/v1/areas/' . $area->id)
+            ->assertStatus(403);
+
+        // A plain member of the owning mandal may not manage areas either.
+        $member = User::factory()->create();
+        MandalMember::create([
+            'mandal_id' => $adminCtx['mandal']->id,
+            'user_id' => $member->id,
+            'role' => MemberRole::MEMBER->value,
+            'is_active' => true,
+            'is_default' => false,
+            'joined_at' => now(),
+        ]);
+        $this->withHeaders($this->authHeaders($member))
+            ->putJson('/api/v1/areas/' . $area->id, ['name' => 'Nope'])
+            ->assertStatus(403);
+
+        // The owning admin can update, then delete.
+        $this->withHeaders($this->authHeaders($adminCtx['user']))
+            ->putJson('/api/v1/areas/' . $area->id, ['name' => 'Ward 1 Updated'])
+            ->assertStatus(200);
+        $this->assertDatabaseHas('mandal_areas', ['id' => $area->id, 'name' => 'Ward 1 Updated']);
+
+        $this->withHeaders($this->authHeaders($adminCtx['user']))
+            ->deleteJson('/api/v1/areas/' . $area->id)
+            ->assertStatus(200);
+        $this->assertDatabaseMissing('mandal_areas', ['id' => $area->id]);
     }
 
     private function getLastMandalId(): string

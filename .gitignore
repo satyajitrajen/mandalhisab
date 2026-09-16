@@ -21,4 +21,6 @@ yarn-error.log
 test_softdelete.php
 /storage/logs/*.log
 /storage/app/firebase-service-account.json
+/bootstrap/cache/routes*.php
+/bootstrap/cache/config.php
 

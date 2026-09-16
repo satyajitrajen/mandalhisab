@@ -20,23 +20,17 @@
     RewriteRule ^ index.php [L]
 </IfModule>
 
-# SSE: Disable mod_deflate for stream endpoint
+# SSE: disable compression and proxy buffering for the stream endpoint.
+# The pattern also matches /public/api/... so it keeps working when the root
+# .htaccess forwards requests into this directory.
+<IfModule mod_setenvif.c>
+    SetEnvIf Request_URI "^/(public/)?api/v1/stream/events$" sse_stream
+</IfModule>
+
 <IfModule mod_deflate.c>
-    SetEnvIf Request_URI ^/api/v1/stream/events$ no-gzip dont-vary
+    SetEnvIf Request_URI "^/(public/)?api/v1/stream/events$" no-gzip dont-vary
 </IfModule>
 
-# SSE: Disable proxy buffering (if behind proxy)
 <IfModule mod_headers.c>
-    <LocationMatch "^/api/v1/stream/events$">
-        Header set X-Accel-Buffering "no"
-    </LocationMatch>
-</IfModule>
-
-# CORS for API (optional — adjust origins as needed)
-<IfModule mod_headers.c>
-    <IfModule mod_rewrite.c>
-        RewriteCond %{REQUEST_FILENAME} !-f
-        RewriteCond %{REQUEST_FILENAME} !-d
-        RewriteRule ^(.*)$ index.php [QSA,L]
-    </IfModule>
+    Header set X-Accel-Buffering "no" env=sse_stream
 </IfModule>

@@ -54,7 +54,7 @@ class ReceiptBookContractTest extends TestCase
 
     public function test_store_rejects_overlapping_ranges(): void
     {
-        $ctx = $this->makeFestivalContext(MemberRole::MEMBER->value);
+        $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
         $this->makeBook($ctx);
 
         $this->withHeaders($this->authHeaders($ctx['user']))
@@ -70,7 +70,7 @@ class ReceiptBookContractTest extends TestCase
 
     public function test_store_creates_book(): void
     {
-        $ctx = $this->makeFestivalContext(MemberRole::MEMBER->value);
+        $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
 
         $this->withHeaders($this->authHeaders($ctx['user']))
             ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/receipt-books', [
@@ -115,9 +115,25 @@ class ReceiptBookContractTest extends TestCase
         ]);
     }
 
+    public function test_assign_rejects_collector_from_outside_the_mandal(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
+        $book = $this->makeBook($ctx);
+        $outsider = User::factory()->create();
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/receipt-books/' . $book->id . '/assign', [
+                'collectorId' => $outsider->id,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'VALIDATION_FAILED');
+
+        $this->assertNull($book->fresh()->assigned_to_user_id);
+    }
+
     public function test_update_status(): void
     {
-        $ctx = $this->makeFestivalContext(MemberRole::MEMBER->value);
+        $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
         $book = $this->makeBook($ctx);
 
         $this->withHeaders($this->authHeaders($ctx['user']))

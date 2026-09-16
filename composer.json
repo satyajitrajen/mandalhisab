@@ -11,6 +11,7 @@
         "kreait/laravel-firebase": "^5.9",
         "laravel/framework": "^11.0",
         "laravel/tinker": "^2.9",
+        "razorpay/razorpay": "^2.9",
         "spatie/simple-excel": "^3.7",
         "tymon/jwt-auth": "^2.1"
     },

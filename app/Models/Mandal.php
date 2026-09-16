@@ -5,6 +5,8 @@ namespace App\Models;
 use App\Traits\HasPrefixedId;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Mandal extends Model
@@ -12,6 +14,7 @@ class Mandal extends Model
     use HasFactory, HasPrefixedId, SoftDeletes;
 
     public $incrementing = false;
+
     protected $keyType = 'string';
 
     protected $fillable = [
@@ -31,6 +34,7 @@ class Mandal extends Model
 
     protected $casts = [
         'established_year' => 'integer',
+        'registration_paid_at' => 'datetime',
     ];
 
     public function getIdPrefix(): string
@@ -38,17 +42,17 @@ class Mandal extends Model
         return 'mnd_';
     }
 
-    public function mandalMembers(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function mandalMembers(): HasMany
     {
         return $this->hasMany(MandalMember::class);
     }
 
-    public function festivals(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function festivals(): HasMany
     {
         return $this->hasMany(Festival::class);
     }
 
-    public function createdByUser(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    public function createdByUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');
     }

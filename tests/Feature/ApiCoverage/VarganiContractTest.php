@@ -3,6 +3,7 @@
 namespace Tests\Feature\ApiCoverage;
 
 use App\Enums\MemberRole;
+use App\Models\User;
 use App\Models\VarganiEntry;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -30,6 +31,25 @@ class VarganiContractTest extends TestCase
         ], $overrides));
 
         return $entry;
+    }
+
+    /**
+     * Add an additional member with the given role to an existing context.
+     */
+    private function makeMemberOf(array $ctx, string $role): User
+    {
+        $member = User::factory()->create();
+
+        \App\Models\MandalMember::create([
+            'mandal_id' => $ctx['mandal']->id,
+            'user_id' => $member->id,
+            'role' => $role,
+            'is_default' => false,
+            'is_active' => true,
+            'joined_at' => now(),
+        ]);
+
+        return $member;
     }
 
     public function test_index_returns_list_with_envelope_meta(): void
@@ -67,7 +87,11 @@ class VarganiContractTest extends TestCase
             ->getJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani/' . $entry->id)
             ->assertStatus(200)
             ->assertJsonPath('data.id', $entry->id)
-            ->assertJsonPath('data.donorName', 'Suresh Deshmukh');
+            ->assertJsonPath('data.donorName', 'Suresh Deshmukh')
+            // The receipt must carry the real mandal/festival names, not a
+            // client-side placeholder.
+            ->assertJsonPath('data.mandalName', 'Test Mandal')
+            ->assertJsonPath('data.festivalName', 'Ganesh Utsav 2025');
     }
 
     public function test_pdf_returns_inline_pdf_stream(): void
@@ -101,6 +125,96 @@ class VarganiContractTest extends TestCase
         ]);
     }
 
+    public function test_member_cannot_cancel_anothers_entry(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $entry = $this->makeVargani($ctx);
+        $member = $this->makeMemberOf($ctx, MemberRole::MEMBER->value);
+
+        $this->withHeaders($this->authHeaders($member))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani/' . $entry->id . '/cancel', [
+                'reason' => 'Not mine',
+            ])
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'FORBIDDEN');
+
+        $this->assertDatabaseHas('vargani_entries', [
+            'id' => $entry->id,
+            'is_cancelled' => false,
+        ]);
+    }
+
+    public function test_collector_cannot_cancel_anothers_entry(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $entry = $this->makeVargani($ctx);
+        $otherCollector = $this->makeMemberOf($ctx, MemberRole::COLLECTOR->value);
+
+        $this->withHeaders($this->authHeaders($otherCollector))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani/' . $entry->id . '/cancel', [
+                'reason' => 'Wrong book',
+            ])
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'FORBIDDEN');
+
+        $this->assertDatabaseHas('vargani_entries', [
+            'id' => $entry->id,
+            'is_cancelled' => false,
+        ]);
+    }
+
+    public function test_non_member_cannot_cancel_entry(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $entry = $this->makeVargani($ctx);
+        $outsider = User::factory()->create();
+
+        $this->withHeaders($this->authHeaders($outsider))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani/' . $entry->id . '/cancel', [
+                'reason' => 'Outsider',
+            ])
+            ->assertStatus(403);
+
+        $this->assertDatabaseHas('vargani_entries', [
+            'id' => $entry->id,
+            'is_cancelled' => false,
+        ]);
+    }
+
+    public function test_treasurer_can_cancel_anothers_entry(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $entry = $this->makeVargani($ctx);
+        $treasurer = $this->makeTreasurerOf($ctx);
+
+        $this->withHeaders($this->authHeaders($treasurer))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani/' . $entry->id . '/cancel', [
+                'reason' => 'Duplicate entry',
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseHas('vargani_entries', [
+            'id' => $entry->id,
+            'is_cancelled' => true,
+            'cancelled_by_user_id' => $treasurer->id,
+        ]);
+    }
+
+    public function test_member_cannot_upload_signature_to_anothers_entry(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $entry = $this->makeVargani($ctx);
+        $member = $this->makeMemberOf($ctx, MemberRole::MEMBER->value);
+
+        $this->withHeaders($this->authHeaders($member))
+            ->post('/api/v1/festivals/' . $ctx['festival']->id . '/vargani/' . $entry->id . '/signature', [
+                'signatureBase64' => 'data:image/png;base64,' . base64_encode("\x89PNG\r\n\x1a\n" . str_repeat('x', 64)),
+            ])
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'FORBIDDEN');
+    }
+
     public function test_signature_upload_accepts_png(): void
     {
         $ctx = $this->makeFestivalContext(MemberRole::MEMBER->value);
@@ -112,6 +226,10 @@ class VarganiContractTest extends TestCase
             ])
             ->assertStatus(200)
             ->assertJsonPath('success', true);
+
+        $fresh = $entry->fresh();
+        $this->assertNotNull($fresh->signature_url);
+        $this->assertStringContainsString('/storage/signatures/', $fresh->signature_url);
     }
 
     public function test_public_receipt_verifies_without_auth(): void

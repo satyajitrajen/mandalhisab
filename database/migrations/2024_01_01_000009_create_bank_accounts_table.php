@@ -14,7 +14,7 @@ return new class extends Migration
             $table->string('bank_name');
             $table->string('account_number');
             $table->string('ifsc');
-            $table->enum('account_type', ['CURRENT', 'SAVINGS']);
+            $table->enum('account_type', ['CURRENT', 'SAVINGS', 'FIXED_DEPOSIT']);
             $table->decimal('balance', 15, 2)->default(0);
             $table->string('upi_id')->nullable();
             $table->boolean('is_active')->default(true);

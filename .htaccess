@@ -1,0 +1,22 @@
+# Root .htaccess — for hosting the whole Laravel app directly in the web root
+# (e.g. public_html/) on shared hosts where the document root cannot be changed.
+# All traffic is forwarded into public/, where the front controller takes over.
+
+<IfModule mod_negotiation.c>
+    Options -MultiViews -Indexes
+</IfModule>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Deny direct access to application internals and secrets
+    RewriteRule ^\.env - [F,L]
+    RewriteRule ^\.git - [F,L]
+    RewriteRule ^\.commandcode - [F,L]
+    RewriteRule ^(composer\.(json|lock)|artisan|phpunit\.xml)$ - [F,L]
+    RewriteRule ^(app|bootstrap|config|database|resources|routes|tests|vendor)(/|$) - [F,L]
+
+    # Forward everything into public/ (guarded so the rewrite cannot loop)
+    RewriteCond %{REQUEST_URI} !/public/
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>

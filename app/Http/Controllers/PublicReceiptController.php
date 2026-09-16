@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\VarganiEntry;
-use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 
 class PublicReceiptController extends Controller
@@ -18,22 +17,27 @@ class PublicReceiptController extends Controller
         $entry = VarganiEntry::with(['festival.mandal', 'collector'])
             ->where('id', $cleanId)
             ->orWhere('receipt_number', $cleanId)
-            ->orWhere('receipt_number', 'Receipt #' . $cleanId)
-            ->orWhere('receipt_number', '#' . $cleanId)
+            ->orWhere('receipt_number', 'Receipt #'.$cleanId)
+            ->orWhere('receipt_number', '#'.$cleanId)
             ->orWhere('client_uuid', $cleanId)
             ->first();
 
-        $mandalName = $entry?->festival?->mandal?->name ?? 'सार्वजनिक गणेशोत्सव मंडळ';
-        $festivalName = $entry?->festival?->name ?? 'गणेशोत्सव २०२६';
-        $donorName = $entry?->donor_name ?? 'भाविक / वर्गणीदार';
-        $amount = (float) ($entry?->amount ?? 0);
-        $receiptNumber = $entry?->receipt_number ?? $cleanId;
-        $dateText = $entry?->created_at ? $entry->created_at->format('d M Y') : date('d M Y');
-        $paymentMode = $entry?->payment_mode?->value ?? 'CASH';
-        $area = $entry?->area ?? '';
-        $mobileNumber = $entry?->mobile_number ?? '';
-        $collectorName = $entry?->collector?->full_name ?? ($entry?->collector?->name ?? 'अधिकृत प्रतिनिधी');
-        $isCancelled = (bool) ($entry?->is_cancelled ?? false);
+        if (! $entry) {
+            abort(404);
+        }
+
+        $mandalName = $entry->festival?->mandal?->name
+            ?? config('app.name', 'Mandal');
+        $festivalName = $entry->festival?->name ?? 'Festival';
+        $donorName = $entry->donor_name ?? '';
+        $amount = (float) $entry->amount;
+        $receiptNumber = $entry->receipt_number ?? $cleanId;
+        $dateText = $entry->created_at ? $entry->created_at->format('d M Y') : date('d M Y');
+        $paymentMode = $entry->payment_mode?->value ?? 'CASH';
+        $area = $entry->area ?? '';
+        $mobileNumber = $entry->mobile_number ?? '';
+        $collectorName = $entry->collector?->full_name ?? ($entry->collector?->name ?? '');
+        $isCancelled = (bool) $entry->is_cancelled;
 
         $amountInWordsMarathi = self::amountInWords($amount, true);
         $amountInWordsEnglish = self::amountInWords($amount, false);
@@ -68,9 +72,9 @@ class PublicReceiptController extends Controller
         }
 
         if ($isMarathi) {
-            return self::marathiWords($num) . ' रुपये फक्त';
+            return self::marathiWords($num).' रुपये फक्त';
         } else {
-            return self::englishWords($num) . ' Rupees Only';
+            return self::englishWords($num).' Rupees Only';
         }
     }
 
@@ -105,36 +109,40 @@ class PublicReceiptController extends Controller
         if ($n < 1000) {
             $hundreds = (int) ($n / 100);
             $rem = $n % 100;
-            $res = ($ones[$hundreds] ?? '') . 'शे';
+            $res = ($ones[$hundreds] ?? '').'शे';
             if ($rem > 0) {
-                $res .= ' ' . ($ones[$rem] ?? '');
+                $res .= ' '.($ones[$rem] ?? '');
             }
+
             return trim($res);
         }
         if ($n < 100000) {
             $thousands = (int) ($n / 1000);
             $rem = $n % 1000;
-            $res = self::marathiWords($thousands) . ' हजार';
+            $res = self::marathiWords($thousands).' हजार';
             if ($rem > 0) {
-                $res .= ' ' . self::marathiWords($rem);
+                $res .= ' '.self::marathiWords($rem);
             }
+
             return trim($res);
         }
         if ($n < 10000000) {
             $lakhs = (int) ($n / 100000);
             $rem = $n % 100000;
-            $res = self::marathiWords($lakhs) . ' लाख';
+            $res = self::marathiWords($lakhs).' लाख';
             if ($rem > 0) {
-                $res .= ' ' . self::marathiWords($rem);
+                $res .= ' '.self::marathiWords($rem);
             }
+
             return trim($res);
         }
         $crores = (int) ($n / 10000000);
         $rem = $n % 10000000;
-        $res = self::marathiWords($crores) . ' कोटी';
+        $res = self::marathiWords($crores).' कोटी';
         if ($rem > 0) {
-            $res .= ' ' . self::marathiWords($rem);
+            $res .= ' '.self::marathiWords($rem);
         }
+
         return trim($res);
     }
 
@@ -157,41 +165,46 @@ class PublicReceiptController extends Controller
         if ($n < 100) {
             $t = (int) ($n / 10);
             $rem = $n % 10;
-            return trim(($tens[$t] ?? '') . ($rem > 0 ? ' ' . $ones[$rem] : ''));
+
+            return trim(($tens[$t] ?? '').($rem > 0 ? ' '.$ones[$rem] : ''));
         }
         if ($n < 1000) {
             $h = (int) ($n / 100);
             $rem = $n % 100;
-            $res = ($ones[$h] ?? '') . ' Hundred';
+            $res = ($ones[$h] ?? '').' Hundred';
             if ($rem > 0) {
-                $res .= ' ' . self::englishWords($rem);
+                $res .= ' '.self::englishWords($rem);
             }
+
             return trim($res);
         }
         if ($n < 100000) {
             $th = (int) ($n / 1000);
             $rem = $n % 1000;
-            $res = self::englishWords($th) . ' Thousand';
+            $res = self::englishWords($th).' Thousand';
             if ($rem > 0) {
-                $res .= ' ' . self::englishWords($rem);
+                $res .= ' '.self::englishWords($rem);
             }
+
             return trim($res);
         }
         if ($n < 10000000) {
             $lakhs = (int) ($n / 100000);
             $rem = $n % 100000;
-            $res = self::englishWords($lakhs) . ' Lakh';
+            $res = self::englishWords($lakhs).' Lakh';
             if ($rem > 0) {
-                $res .= ' ' . self::englishWords($rem);
+                $res .= ' '.self::englishWords($rem);
             }
+
             return trim($res);
         }
         $cr = (int) ($n / 10000000);
         $rem = $n % 10000000;
-        $res = self::englishWords($cr) . ' Crore';
+        $res = self::englishWords($cr).' Crore';
         if ($rem > 0) {
-            $res .= ' ' . self::englishWords($rem);
+            $res .= ' '.self::englishWords($rem);
         }
+
         return trim($res);
     }
 }

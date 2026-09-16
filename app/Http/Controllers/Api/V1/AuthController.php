@@ -2,6 +2,10 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Requests\DeleteAccountRequest;
+use App\Http\Requests\ForgotPasswordRequest;
+use App\Http\Requests\RegisterUserRequest;
+use App\Http\Requests\ResetPasswordRequest;
 use App\Services\AccountDeletionService;
 use App\Services\AuthService;
 use App\Traits\ApiResponse;
@@ -19,16 +23,9 @@ class AuthController
     /**
      * POST /api/v1/auth/register
      */
-    public function register(Request $request)
+    public function register(RegisterUserRequest $request)
     {
-        $validated = $request->validate([
-            'fullName' => ['required', 'string', 'min:2', 'max:80'],
-            'usernameOrPhone' => ['required', 'string'],
-            'password' => ['required', 'string', 'min:8'],
-            'mandalName' => ['nullable', 'string', 'max:255'],
-            'deviceToken' => ['nullable', 'string'],
-            'platform' => ['nullable', 'string', 'in:android,ios,web,windows'],
-        ]);
+        $validated = $request->validated();
 
         try {
             $result = $this->authService->register($validated);
@@ -136,7 +133,7 @@ class AuthController
     {
         $validated = $request->validate([
             'name' => ['nullable', 'string', 'max:80'],
-            'email' => ['nullable', 'email'],
+            'email' => ['nullable', 'email:rfc', 'max:255'],
             'defaultLanguage' => ['nullable', 'string', 'in:en,mr'],
             'isBiometricEnabled' => ['nullable', 'boolean'],
             'activeFestivalId' => ['nullable', 'string'],
@@ -144,7 +141,12 @@ class AuthController
         ]);
 
         $user = $request->user();
-        $updated = $this->authService->updateProfile($user, $validated);
+
+        try {
+            $updated = $this->authService->updateProfile($user, $validated);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
+        }
 
         return $this->success([
             'id' => $updated->id,
@@ -206,16 +208,16 @@ class AuthController
     /**
      * POST /api/v1/auth/forgot-password (public, rate-limited)
      */
-    public function forgotPassword(Request $request)
+    public function forgotPassword(ForgotPasswordRequest $request)
     {
-        $validated = $request->validate([
-            'usernameOrPhone' => ['required', 'string'],
-        ]);
-
         try {
-            $data = $this->authService->forgotPassword($validated['usernameOrPhone']);
+            $data = $this->authService->forgotPassword($request->validated('usernameOrPhone'));
 
-            return $this->success($data, 'OTP sent successfully');
+            return $this->success($data, 'Password reset link sent to your email');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
+        } catch (\RuntimeException $e) {
+            return $this->error('INTERNAL_ERROR', $e->getMessage(), 500);
         } catch (\Exception $e) {
             return $this->error('NOT_FOUND', $e->getMessage(), 404);
         }
@@ -224,18 +226,13 @@ class AuthController
     /**
      * POST /api/v1/auth/reset-password (public, rate-limited)
      */
-    public function resetPassword(Request $request)
+    public function resetPassword(ResetPasswordRequest $request)
     {
-        $validated = $request->validate([
-            'usernameOrPhone' => ['required', 'string'],
-            'otp' => ['required', 'string', 'digits:6'],
-            'newPassword' => ['required', 'string', 'min:8'],
-        ]);
+        $validated = $request->validated();
 
         try {
             $this->authService->resetPassword(
-                $validated['usernameOrPhone'],
-                $validated['otp'],
+                $validated['token'],
                 $validated['newPassword']
             );
 
@@ -248,24 +245,38 @@ class AuthController
     /**
      * DELETE /api/v1/auth/me
      *
-     * Permanently delete the authenticated user's account.
-     * Requires password confirmation.
+     * Schedule account deletion after the 7-day wait. Requires password.
      */
-    public function deleteMe(Request $request)
+    public function deleteMe(DeleteAccountRequest $request)
     {
-        $validated = $request->validate([
-            'password' => ['required', 'string'],
-        ]);
-
         $user = $request->user();
 
         try {
-            $this->deletionService->deleteAuthenticatedUser($user, $validated['password']);
+            $scheduled = $this->deletionService->scheduleAuthenticatedDeletion(
+                $user,
+                $request->validated()['password']
+            );
         } catch (\Exception $e) {
             return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
         }
 
-        return $this->success(null, 'Account deleted permanently');
+        return $this->success($scheduled, 'Account deletion scheduled. You have 7 days to cancel.');
+    }
+
+    /**
+     * POST /api/v1/auth/me/cancel-deletion
+     */
+    public function cancelDeletion(Request $request)
+    {
+        $user = $request->user();
+
+        try {
+            $this->deletionService->cancelAuthenticatedDeletion($user);
+        } catch (\Exception $e) {
+            return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
+        }
+
+        return $this->success(null, 'Account deletion cancelled');
     }
 
     /**

@@ -3,46 +3,38 @@
 namespace App\Services;
 
 use App\Enums\AuthMethod;
+use App\Enums\MoneyTrailType;
 use App\Enums\ReportType;
 use App\Models\ExpenseEntry;
-use App\Models\FinalHisabAudit;
 use App\Models\Festival;
+use App\Models\FinalHisabAudit;
 use App\Models\MoneyTrailEntry;
-use App\Models\OtherIncome;
 use App\Models\ReceiptBook;
 use App\Models\User;
 use App\Models\VarganiEntry;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 
 class ReportService
 {
+    public function __construct(protected FestivalFinancials $financials) {}
+
     /**
      * High-level overview of a festival.
      */
     public function getOverview(string $festivalId): array
     {
-        $varganiTotal = VarganiEntry::where('festival_id', $festivalId)
-            ->where('is_cancelled', false)
-            ->sum('amount');
-
-        $expenseTotal = ExpenseEntry::where('festival_id', $festivalId)
-            ->where('status', \App\Enums\ExpenseStatus::PAID)
-            ->sum('amount');
-
-        $otherIncomeTotal = OtherIncome::where('festival_id', $festivalId)->sum('amount');
-
         $festival = Festival::findOrFail($festivalId);
-
-        $totalIncome = (float) $varganiTotal + (float) $otherIncomeTotal;
+        $totals = $this->financials->forFestival($festival);
 
         return [
             'festival' => $festival,
-            'vargani_total' => (float) $varganiTotal,
-            'other_income_total' => (float) $otherIncomeTotal,
-            'total_income' => $totalIncome,
-            'total_expenses' => (float) $expenseTotal,
-            'closing_balance' => (float) $festival->opening_balance + $totalIncome - (float) $expenseTotal,
+            'vargani_total' => $totals['vargani_total'],
+            'other_income_total' => $totals['other_income_total'],
+            'total_income' => $totals['total_income'],
+            'total_expenses' => $totals['paid_expenses'],
+            'closing_balance' => $totals['closing_balance'],
         ];
     }
 
@@ -82,9 +74,9 @@ class ReportService
 
             ReportType::CASH => MoneyTrailEntry::where('festival_id', $festivalId)
                 ->whereIn('type', [
-                    \App\Enums\MoneyTrailType::CASH_RECEIVED,
-                    \App\Enums\MoneyTrailType::CASH_EXPENSE,
-                    \App\Enums\MoneyTrailType::CASH_HANDOVER,
+                    MoneyTrailType::CASH_RECEIVED,
+                    MoneyTrailType::CASH_EXPENSE,
+                    MoneyTrailType::CASH_HANDOVER,
                 ])
                 ->get()
                 ->toArray(),
@@ -138,7 +130,7 @@ class ReportService
             $audit->president_signed_at = now();
             $audit->president_user_id = $user->id;
         } elseif ($roleNorm === 'TREASURER') {
-            if ($pin && ! \Illuminate\Support\Facades\Hash::check($pin, $user->security_pin)) {
+            if ($pin && ! Hash::check($pin, $user->security_pin)) {
                 throw new \Exception('Invalid PIN');
             }
             $audit->treasurer_signed = true;
@@ -165,8 +157,11 @@ class ReportService
     {
         $audit = $this->computeFinalHisab($festivalId);
 
+        $festival = $audit->festival;
+        $festival?->loadMissing('mandal');
+
         $pdf = Pdf::loadView('pdf.final_hisab', [
-            'festival' => $audit->festival,
+            'festival' => $festival,
             'openingBalance' => (float) $audit->opening_balance,
             'varganiTotal' => (float) $audit->vargani_total,
             'otherIncomeTotal' => (float) $audit->other_income_total,

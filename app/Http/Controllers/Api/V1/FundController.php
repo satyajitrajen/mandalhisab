@@ -2,13 +2,13 @@
 
 namespace App\Http\Controllers\Api\V1;
 
-use App\Enums\HandoverStatus;
 use App\Enums\MemberRole;
 use App\Enums\MoneyTrailType;
 use App\Models\BankAccount;
 use App\Models\CashHandover;
 use App\Models\Festival;
 use App\Models\FestivalBalance;
+use App\Models\FinalHisabAudit;
 use App\Models\MandalMember;
 use App\Models\MoneyTrailEntry;
 use App\Models\OtherIncome;
@@ -17,14 +17,14 @@ use App\Services\CacheKeyService;
 use App\Services\FundService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 
 class FundController
 {
     use ApiResponse;
 
-    public function __construct(protected FundService $fundService)
-    {
-    }
+    public function __construct(protected FundService $fundService) {}
 
     protected function checkTreasurerOrAdmin(Festival $festival): void
     {
@@ -47,6 +47,13 @@ class FundController
                 'error' => ['code' => 'FORBIDDEN', 'message' => 'Only ADMIN or TREASURER can access fund data'],
             ], 403));
         }
+    }
+
+    protected function isHisabLocked(string $festivalId): bool
+    {
+        return FinalHisabAudit::where('festival_id', $festivalId)
+            ->where('is_locked', true)
+            ->exists();
     }
 
     protected function checkMember(Festival $festival): void
@@ -94,10 +101,13 @@ class FundController
                     ];
                 });
 
+            $totalFunds = $buckets['cash_treasurer'] + $buckets['cash_collectors'] + $buckets['bank'] + $buckets['upi'];
+
             return $this->success([
-                'totalCollected' => $buckets['cash_treasurer'] + $buckets['cash_collectors'] + $buckets['bank'] + $buckets['upi'] + $totalExpenses,
+                'totalFunds' => $totalFunds,
+                'totalCollected' => $totalFunds + $totalExpenses,
                 'totalExpenses' => $totalExpenses,
-                'netBalance' => $buckets['cash_treasurer'] + $buckets['cash_collectors'] + $buckets['bank'] + $buckets['upi'],
+                'netBalance' => $totalFunds,
                 'cashInHand' => max(0, $buckets['cash_treasurer'] + $buckets['cash_collectors']),
                 'cashTreasurer' => $buckets['cash_treasurer'],
                 'cashCollectors' => $buckets['cash_collectors'],
@@ -134,8 +144,8 @@ class FundController
                 'type' => $validated['type'] ?? null,
             ]));
 
-            $page = $validated['page'] ?? 1;
-            $limit = $validated['limit'] ?? 20;
+            $page = (int) ($validated['page'] ?? 1);
+            $limit = (int) ($validated['limit'] ?? 20);
             $paginated = $entries->forPage($page, $limit)->values();
 
             $data = $paginated->map(function ($e) {
@@ -274,12 +284,12 @@ class FundController
         if ($request->hasFile('photoFile') || $request->hasFile('photo')) {
             $file = $request->file('photoFile') ?? $request->file('photo');
             $path = $file->store('handovers', 'public');
-            $photoUrl = asset('storage/' . $path);
+            $photoUrl = asset('storage/'.$path);
         } elseif (! empty($validated['photoBase64'])) {
             $data = base64_decode(explode(',', $validated['photoBase64'])[1] ?? $validated['photoBase64']);
-            $path = 'handovers/' . uniqid() . '.jpg';
-            \Illuminate\Support\Facades\Storage::disk('public')->put($path, $data);
-            $photoUrl = asset('storage/' . $path);
+            $path = 'handovers/'.uniqid().'.jpg';
+            Storage::disk('public')->put($path, $data);
+            $photoUrl = asset('storage/'.$path);
         }
 
         try {
@@ -292,8 +302,11 @@ class FundController
                 'notes' => $validated['notes'] ?? null,
                 'photo_url' => $photoUrl,
             ], $fromUserId);
-        } catch (\Exception $e) {
-            return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // The raw DB message can embed SQL and encrypted column values;
+            // never echo it back to the client.
+            report($e);
+            return $this->error('INTERNAL_ERROR', 'Could not record handover', 500);
         }
 
         CacheKeyService::clearFunds($festival);
@@ -365,6 +378,10 @@ class FundController
 
         $this->checkTreasurerOrAdmin($handoverModel->festival);
 
+        if ($this->isHisabLocked($handoverModel->festival_id)) {
+            return $this->error('HISAB_LOCKED', 'Final hisab is locked. No further changes are allowed.', 409);
+        }
+
         $validated = $request->validate([
             'status' => ['required', 'in:VERIFIED_ACCEPTED,REJECTED,accept,reject'],
             'pin' => ['nullable', 'string', 'digits:4'],
@@ -384,7 +401,7 @@ class FundController
                 return $this->error('PIN_REQUIRED', 'Security PIN is required to verify handovers', 422);
             }
 
-            if (! \Illuminate\Support\Facades\Hash::check($validated['pin'], $user->security_pin)) {
+            if (! Hash::check($validated['pin'], $user->security_pin)) {
                 return $this->error('INVALID_PIN', 'The entered PIN is incorrect', 422);
             }
         }
@@ -431,7 +448,7 @@ class FundController
                 return [
                     'id' => $a->id,
                     'bankName' => $a->bank_name,
-                    'accountNumberMasked' => '****' . substr($a->account_number, -4),
+                    'accountNumberMasked' => '****'.substr($a->account_number, -4),
                     'ifsc' => $a->ifsc,
                     'accountType' => $a->account_type->value,
                     'balance' => (float) $a->balance,
@@ -470,8 +487,11 @@ class FundController
                 'upi_id' => $validated['upiId'] ?? null,
                 'is_active' => true,
             ]);
-        } catch (\Exception $e) {
-            return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // The raw DB message can embed SQL and encrypted column values;
+            // never echo it back to the client.
+            report($e);
+            return $this->error('INTERNAL_ERROR', 'Could not create bank account', 500);
         }
 
         CacheKeyService::clearDashboardAndFunds($festival);
@@ -479,7 +499,7 @@ class FundController
         return $this->success([
             'id' => $account->id,
             'bankName' => $account->bank_name,
-            'accountNumberMasked' => '****' . substr($account->account_number, -4),
+            'accountNumberMasked' => '****'.substr($account->account_number, -4),
             'ifsc' => $account->ifsc,
             'balance' => (float) $account->balance,
         ], 'Bank account created successfully', 201);
@@ -497,6 +517,10 @@ class FundController
 
         $this->checkTreasurerOrAdmin($accountModel->festival);
 
+        if ($this->isHisabLocked($accountModel->festival_id)) {
+            return $this->error('HISAB_LOCKED', 'Final hisab is locked. No further changes are allowed.', 409);
+        }
+
         $validated = $request->validate([
             'bankName' => ['nullable', 'string', 'max:255'],
             'ifscCode' => ['nullable', 'string', 'max:20'],
@@ -513,8 +537,11 @@ class FundController
                 'upi_id' => $validated['upiId'] ?? null,
                 'is_active' => isset($validated['isActive']) ? $validated['isActive'] : null,
             ], fn ($v) => $v !== null));
-        } catch (\Exception $e) {
-            return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // The raw DB message can embed SQL and encrypted column values;
+            // never echo it back to the client.
+            report($e);
+            return $this->error('INTERNAL_ERROR', 'Could not update bank account', 500);
         }
 
         CacheKeyService::clearDashboardAndFunds($accountModel->festival_id);
@@ -583,6 +610,7 @@ class FundController
             ->get()
             ->map(function ($i) {
                 $dateStr = $i->date instanceof \DateTimeInterface ? $i->date->format('Y-m-d') : (string) $i->date;
+
                 return [
                     'id' => $i->id,
                     'title' => $i->title,

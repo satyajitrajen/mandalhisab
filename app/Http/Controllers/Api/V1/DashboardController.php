@@ -7,12 +7,15 @@ use App\Models\Festival;
 use App\Models\FestivalBalance;
 use App\Models\MandalMember;
 use App\Services\CacheKeyService;
+use App\Services\FestivalFinancials;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
 class DashboardController
 {
     use ApiResponse;
+
+    public function __construct(protected FestivalFinancials $financials) {}
 
     /**
      * GET /api/v1/festivals/:festivalId/dashboard/summary
@@ -34,13 +37,13 @@ class DashboardController
         $cacheKey = CacheKeyService::dashboard($festival->id);
 
         return CacheKeyService::remember($cacheKey, CacheKeyService::TTL_DASHBOARD, function () use ($festival) {
-            // Core aggregates
+            $totals = $this->financials->forFestival($festival);
             $varganiQuery = $festival->varganiEntries()->where('is_cancelled', false);
-            $totalCollected = (float) $varganiQuery->sum('amount');
-            $totalExpenses = (float) $festival->expenseEntries()->where('status', 'PAID')->sum('amount');
-            $netBalance = $totalCollected - $totalExpenses;
+            $totalCollected = $totals['vargani_total'];
+            $totalExpenses = $totals['paid_expenses'];
+            $netBalance = $totals['closing_balance'];
             $budgetGoal = (float) $festival->budget_goal;
-            $progressPercentage = $budgetGoal > 0 ? round(($totalCollected / $budgetGoal) * 100, 1) : 0;
+            $progressPercentage = $totals['progress_percentage'];
 
             // Fund breakdown from the explicit FestivalBalance ledger (single-row, O(1))
             $balance = FestivalBalance::forFestival($festival->id);
@@ -77,11 +80,12 @@ class DashboardController
                 ->get()
                 ->map(function ($v) {
                     $mode = $v->payment_mode instanceof \BackedEnum ? $v->payment_mode->value : (string) $v->payment_mode;
+
                     return [
                         'id' => $v->id,
                         'type' => 'VARGANI',
                         'title' => $v->donor_name,
-                        'subtitle' => 'Receipt #' . $v->receipt_number . ' • ' . $mode,
+                        'subtitle' => 'Receipt #'.$v->receipt_number.' • '.$mode,
                         'amount' => (float) $v->amount,
                         'paymentMode' => $mode,
                         'timestamp' => $v->created_at?->toIso8601String(),
@@ -95,11 +99,12 @@ class DashboardController
                 ->map(function ($e) {
                     $cat = $e->category instanceof \BackedEnum ? $e->category->value : (string) $e->category;
                     $mode = $e->payment_mode instanceof \BackedEnum ? $e->payment_mode->value : (string) $e->payment_mode;
+
                     return [
                         'id' => $e->id,
                         'type' => 'EXPENSE',
                         'title' => $e->title,
-                        'subtitle' => $cat . ' • ' . $mode,
+                        'subtitle' => $cat.' • '.$mode,
                         'amount' => -(float) $e->amount,
                         'paymentMode' => $mode,
                         'timestamp' => $e->created_at?->toIso8601String(),
@@ -116,15 +121,18 @@ class DashboardController
             return $this->success([
                 'festival' => [
                     'id' => $festival->id,
-                    'name' => $festival->name . ' ' . $festival->year,
+                    'name' => $festival->name.' '.$festival->year,
                     'status' => $festStatus,
                 ],
                 'metrics' => [
                     'totalCollected' => $totalCollected,
+                    'otherIncome' => $totals['other_income_total'],
+                    'totalIncome' => $totals['total_income'],
                     'budgetGoal' => $budgetGoal,
                     'progressPercentage' => $progressPercentage,
                     'totalExpenses' => $totalExpenses,
                     'netBalance' => $netBalance,
+                    'closingBalance' => $netBalance,
                     'cashInHand' => max(0, $cashInHand),
                     'cashTreasurer' => $cashTreasurer,
                     'cashCollectors' => $cashCollectors,

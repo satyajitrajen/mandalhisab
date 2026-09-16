@@ -3,10 +3,13 @@
 namespace Tests\Feature\ApiCoverage;
 
 use App\Enums\MemberRole;
+use App\Http\Middleware\RateLimit;
+use App\Mail\PasswordResetLinkMail;
 use App\Models\MandalMember;
 use App\Models\RefreshSession;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Mail;
 use Tests\Support\JwtAuth;
 use Tests\TestCase;
 
@@ -153,36 +156,45 @@ class AuthContractTest extends TestCase
 
     public function test_forgot_and_reset_password_flow(): void
     {
-        $user = User::factory()->create(['password' => 'old-password-1', 'phone' => '9876543210']);
+        $this->withoutMiddleware(RateLimit::class);
+        Mail::fake();
 
-        $otpResponse = $this->postJson('/api/v1/auth/forgot-password', [
+        $user = User::factory()->create([
+            'password' => 'old-password-1',
+            'phone' => '9876543210',
+            'email' => 'reset.me@example.com',
+        ]);
+
+        $this->postJson('/api/v1/auth/forgot-password', [
             'usernameOrPhone' => '9876543210',
-        ])->assertStatus(200);
+        ])->assertStatus(200)
+            ->assertJsonPath('data.sentTo', 'r***@example.com')
+            ->assertJsonMissingPath('data.token');
 
-        $otp = $otpResponse->json('data.otp');
-        $this->assertIsString($otp);
-        $this->assertSame(6, strlen($otp));
+        $token = null;
+        Mail::assertSent(PasswordResetLinkMail::class, function (PasswordResetLinkMail $mail) use (&$token, $user) {
+            $token = $mail->token;
+            return $mail->hasTo($user->email) && strlen($mail->token) === 64;
+        });
+        $this->assertIsString($token);
 
-        // Wrong OTP -> 422.
+        // Wrong token -> 422.
         $this->postJson('/api/v1/auth/reset-password', [
-            'usernameOrPhone' => '9876543210',
-            'otp' => '000000',
+            'token' => str_repeat('0', 64),
             'newPassword' => 'brand-new-pass-1',
         ])->assertStatus(422);
 
-        // Correct OTP -> password changed.
+        // Correct token -> password changed.
         $this->postJson('/api/v1/auth/reset-password', [
-            'usernameOrPhone' => '9876543210',
-            'otp' => $otp,
+            'token' => $token,
             'newPassword' => 'brand-new-pass-1',
         ])->assertStatus(200);
 
         $this->assertTrue(password_verify('brand-new-pass-1', User::find($user->id)->password));
 
-        // OTP is single-use -> reusing it fails.
+        // Token is single-use -> reusing it fails.
         $this->postJson('/api/v1/auth/reset-password', [
-            'usernameOrPhone' => '9876543210',
-            'otp' => $otp,
+            'token' => $token,
             'newPassword' => 'another-pass-123',
         ])->assertStatus(422);
 
@@ -200,9 +212,33 @@ class AuthContractTest extends TestCase
 
     public function test_forgot_password_unknown_account_returns_404(): void
     {
+        $this->withoutMiddleware(RateLimit::class);
         $this->postJson('/api/v1/auth/forgot-password', [
             'usernameOrPhone' => '9999999999',
         ])->assertStatus(404);
+    }
+
+    public function test_forgot_password_accepts_email_and_requires_one(): void
+    {
+        $this->withoutMiddleware(RateLimit::class);
+        Mail::fake();
+
+        $user = User::factory()->create([
+            'phone' => '9876501122',
+            'email' => 'by.email@example.com',
+        ]);
+
+        $this->postJson('/api/v1/auth/forgot-password', [
+            'usernameOrPhone' => 'by.email@example.com',
+        ])->assertStatus(200);
+
+        Mail::assertSent(PasswordResetLinkMail::class, fn (PasswordResetLinkMail $mail) => $mail->hasTo($user->email));
+
+        User::factory()->create(['phone' => '9876501133', 'email' => null]);
+
+        $this->postJson('/api/v1/auth/forgot-password', [
+            'usernameOrPhone' => '9876501133',
+        ])->assertStatus(422);
     }
 
     private function loginAndGetTokens(User $user): array

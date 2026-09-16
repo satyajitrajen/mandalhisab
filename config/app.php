@@ -123,4 +123,13 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    'latest_version' => env('APP_LATEST_VERSION', '1.0.0'),
+    'latest_build_number' => (int) env('APP_LATEST_BUILD_NUMBER', 1),
+    'min_supported_version' => env('APP_MIN_SUPPORTED_VERSION', '1.0.0'),
+    'min_supported_build_number' => (int) env('APP_MIN_SUPPORTED_BUILD_NUMBER', 1),
+    'force_update' => filter_var(env('APP_FORCE_UPDATE', false), FILTER_VALIDATE_BOOLEAN),
+    'apk_size_mb' => (float) env('APP_APK_SIZE_MB', 63.3),
+
+    'account_deletion_grace_days' => (int) env('ACCOUNT_DELETION_GRACE_DAYS', 7),
+
 ];

@@ -2,11 +2,12 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Enums\MemberRole;
 use App\Models\DeviceToken;
+use App\Models\MandalMember;
 use App\Services\FcmService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 
 class AppUpdateController
 {
@@ -17,11 +18,6 @@ class AppUpdateController
      */
     private function getReleaseMetadata(): array
     {
-        $apkPath = file_exists(public_path('mandalhishob.apk')) 
-            ? public_path('mandalhishob.apk') 
-            : public_path('mandalhisab.apk');
-        $fileSizeMb = file_exists($apkPath) ? round(filesize($apkPath) / (1024 * 1024), 1) : 62.8;
-
         return [
             'latestVersion' => config('app.latest_version', '1.0.0'),
             'latestBuildNumber' => (int) config('app.latest_build_number', 1),
@@ -32,9 +28,9 @@ class AppUpdateController
             'releaseTitleEnglish' => 'New Update Available! 🚩',
             'releaseNotesMarathi' => "• अधिकृत गणेशोत्सव पावती व थेट व्हॉट्सअ‍ॅप लिंक\n• ऑफलाइन डेटा साठवणूक व स्वयंचलित सिंक\n• नवीन सिंक व अयशस्वी नोंदी व्यवस्थापन\n• कार्यप्रदर्शन सुधारणा आणि बग फिक्सेस",
             'releaseNotesEnglish' => "• Official Ganeshotsav Receipt & direct WhatsApp link\n• Offline Master Data caching & Auto Sync\n• New Sync & Failed Jobs Manager\n• Performance improvements & bug fixes",
-            'downloadUrl' => url('/download'),
-            'apkSizeMb' => $fileSizeMb,
-            'releasedAt' => '2026-08-16T22:00:00Z',
+            'downloadUrl' => rtrim((string) config('app.url'), '/').'/download',
+            'apkSizeMb' => (float) config('app.apk_size_mb', 63.3),
+            'releasedAt' => '2026-08-23T03:02:00Z',
         ];
     }
 
@@ -79,6 +75,15 @@ class AppUpdateController
      */
     public function broadcastUpdatePush(Request $request, FcmService $fcmService)
     {
+        $isSuperAdmin = MandalMember::where('user_id', auth()->id())
+            ->where('is_active', true)
+            ->where('role', MemberRole::SUPER_ADMIN)
+            ->exists();
+
+        if (! $isSuperAdmin) {
+            return $this->error('FORBIDDEN', 'Only platform super admins can broadcast app updates', 403);
+        }
+
         $validated = $request->validate([
             'force' => ['nullable', 'boolean'],
             'customTitle' => ['nullable', 'string'],
@@ -103,19 +108,13 @@ class AppUpdateController
             'body' => $body,
         ];
 
-        $sentCount = 0;
-        foreach ($tokens as $token) {
-            try {
-                // Send raw FCM cloud message via FcmService or notification
-                $sentCount++;
-            } catch (\Throwable $e) {
-                Log::warning('FCM broadcast item failed: ' . $e->getMessage());
-            }
-        }
+        $result = $fcmService->sendToTokens($tokens, $title, $body, $payload);
 
         return $this->success([
-            'broadcastSent' => true,
+            'broadcastSent' => $result['sent'] > 0,
             'targetedTokens' => count($tokens),
+            'sent' => $result['sent'],
+            'failed' => $result['failed'],
             'payload' => $payload,
         ], 'App update push broadcast dispatched successfully');
     }

@@ -27,7 +27,27 @@ class HealthCheckTest extends TestCase
                     'supportPhone',
                     'supportEmail',
                     'features',
+                    'razorpay' => [
+                        'keyId',
+                        'registrationAmountPaise',
+                        'currency',
+                    ],
+                    'fcm' => [
+                        'enabled',
+                        'projectId',
+                        'credentialsPresent',
+                    ],
                 ],
+            ]);
+    }
+
+    public function test_app_version_is_public(): void
+    {
+        $this->getJson('/api/v1/app/version')
+            ->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonStructure([
+                'data' => ['latestVersion', 'updateAvailable', 'isForceUpdate'],
             ]);
     }
 }

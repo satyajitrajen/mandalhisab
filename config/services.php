@@ -31,4 +31,17 @@ return [
         ],
     ],
 
+    'fcm' => [
+        'enabled' => env('FIREBASE_ENABLED', false),
+        'credentials' => env('FIREBASE_CREDENTIALS', 'storage/app/firebase-service-account.json'),
+        'project_id' => env('FIREBASE_PROJECT_ID'),
+    ],
+
+    'razorpay' => [
+        'key_id' => env('RAZORPAY_KEY_ID'),
+        'key_secret' => env('RAZORPAY_KEY_SECRET'),
+        'registration_amount_paise' => (int) env('RAZORPAY_REGISTRATION_AMOUNT_PAISE', 10100),
+        'currency' => env('RAZORPAY_CURRENCY', 'INR'),
+    ],
+
 ];

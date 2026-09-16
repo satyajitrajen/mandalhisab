@@ -11,31 +11,16 @@ Route::get('/receipt/{id}', [PublicReceiptController::class, 'show'])->name('pub
 Route::get('/receipts/{id}', [PublicReceiptController::class, 'show'])->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
 Route::get('/r/{id}', [PublicReceiptController::class, 'show'])->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
 
-// Direct App APK Download Routes
 Route::get('/download', function () {
-    $apkPath = file_exists(public_path('mandalhishob.apk')) 
-        ? public_path('mandalhishob.apk') 
-        : public_path('mandalhisab.apk');
-
-    if (file_exists($apkPath)) {
-        return response()->download($apkPath, 'MandalHishob.apk', [
-            'Content-Type' => 'application/vnd.android.package-archive',
-        ]);
+    $path = public_path('MandalHishob.apk');
+    if (! is_file($path)) {
+        abort(404);
     }
-    return response()->json(['error' => 'APK file not found'], 404);
+
+    return response()->download($path, 'MandalHishob.apk', [
+        'Content-Type' => 'application/vnd.android.package-archive',
+    ]);
 })->name('app.download')->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
-
-Route::get('/download/apk', function () {
-    return redirect('/download');
-})->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
-
-Route::get('/download-app', function () {
-    return redirect('/download');
-})->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
-
-Route::get('/mandalhishob.apk', function () {
-    return redirect('/download');
-})->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
 
 Route::get('/', function () {
     $path = public_path('index.html');

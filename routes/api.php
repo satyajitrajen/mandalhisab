@@ -1,23 +1,24 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\V1\AuthController;
-use App\Http\Controllers\Api\V1\MandalController;
-use App\Http\Controllers\Api\V1\FestivalController;
-use App\Http\Controllers\Api\V1\DashboardController;
-use App\Http\Controllers\Api\V1\VarganiController;
-use App\Http\Controllers\Api\V1\ReceiptBookController;
-use App\Http\Controllers\Api\V1\ExpenseController;
-use App\Http\Controllers\Api\V1\FundController;
-use App\Http\Controllers\Api\V1\MemberController;
-use App\Http\Controllers\Api\V1\ReportController;
-use App\Http\Controllers\Api\V1\ConfigController;
-use App\Http\Controllers\Api\V1\DeviceController;
-use App\Http\Controllers\Api\V1\NotificationController;
-use App\Http\Controllers\Api\V1\SyncController;
-use App\Http\Controllers\Api\V1\EventStreamController;
-use App\Http\Controllers\Api\V1\AreaController;
 use App\Http\Controllers\Api\V1\AppUpdateController;
+use App\Http\Controllers\Api\V1\AreaController;
+use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\ConfigController;
+use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\DeviceController;
+use App\Http\Controllers\Api\V1\EventStreamController;
+use App\Http\Controllers\Api\V1\ExpenseController;
+use App\Http\Controllers\Api\V1\FestivalController;
+use App\Http\Controllers\Api\V1\FundController;
+use App\Http\Controllers\Api\V1\MandalController;
+use App\Http\Controllers\Api\V1\MemberController;
+use App\Http\Controllers\Api\V1\NotificationController;
+use App\Http\Controllers\Api\V1\PaymentController;
+use App\Http\Controllers\Api\V1\ReceiptBookController;
+use App\Http\Controllers\Api\V1\ReportController;
+use App\Http\Controllers\Api\V1\SyncController;
+use App\Http\Controllers\Api\V1\VarganiController;
+use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
@@ -44,8 +45,14 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/reset-password', [AuthController::class, 'resetPassword']);
     });
 
-    // Protected
+    // Logged-in, including unpaid mandals (must be able to pay the fee)
     Route::middleware(['jwt.auth', 'tenant.scope', 'rate.limit'])->group(function () {
+        Route::post('payments/create-order', [PaymentController::class, 'createOrder']);
+        Route::post('payments/verify', [PaymentController::class, 'verify']);
+    });
+
+    // Protected
+    Route::middleware(['jwt.auth', 'tenant.scope', 'rate.limit', 'registration.paid'])->group(function () {
 
         // Auth & Profile
         Route::post('auth/logout', [AuthController::class, 'logout']);
@@ -53,6 +60,7 @@ Route::prefix('v1')->group(function () {
         Route::put('auth/me', [AuthController::class, 'updateMe']);
         Route::put('auth/security-pin', [AuthController::class, 'setPin']);
         Route::put('auth/password', [AuthController::class, 'changePassword']);
+        Route::post('auth/me/cancel-deletion', [AuthController::class, 'cancelDeletion']);
         Route::delete('auth/me', [AuthController::class, 'deleteMe']);
 
         // Mandals & Areas
@@ -86,8 +94,8 @@ Route::prefix('v1')->group(function () {
         Route::get('festivals/{festival}/receipt-books', [ReceiptBookController::class, 'index']);
         Route::get('receipt-books/{book}', [ReceiptBookController::class, 'show']);
 
-        // Receipt Books (writes, blocked once final hisab is locked, idempotent)
-        Route::middleware(['hisab.locked', 'idempotency'])->group(function () {
+        // Receipt Books (writes, ADMIN/TREASURER only, blocked once final hisab is locked, idempotent)
+        Route::middleware(['hisab.locked', 'idempotency', 'role:ADMIN,TREASURER'])->group(function () {
             Route::post('festivals/{festival}/receipt-books', [ReceiptBookController::class, 'store']);
             Route::post('receipt-books/{book}/assign', [ReceiptBookController::class, 'assign']);
             Route::patch('receipt-books/{book}/status', [ReceiptBookController::class, 'updateStatus']);
@@ -128,8 +136,11 @@ Route::prefix('v1')->group(function () {
         // Members (writes are idempotent so offline retries can't duplicate)
         Route::apiResource('mandals.members', MemberController::class)->only(['index', 'store']);
         Route::apiResource('members', MemberController::class)->only(['show', 'update']);
+        Route::match(['put', 'patch'], 'mandals/{mandal}/members/{member}', [MemberController::class, 'update']);
         Route::get('mandals/{mandal}/members/{member}/financial-summary', [MemberController::class, 'financialSummary']);
         Route::post('mandals/{mandal}/members/{member}/deactivate', [MemberController::class, 'deactivate'])->middleware('idempotency');
+        Route::post('mandals/{mandal}/members/{member}/reactivate', [MemberController::class, 'reactivate'])->middleware('idempotency');
+        Route::post('mandals/{mandal}/members/{member}/reset-login', [MemberController::class, 'resetLogin'])->middleware('idempotency');
 
         // Reports (specific routes must come before generic {reportType})
         Route::get('festivals/{festival}/reports/overview', [ReportController::class, 'overview']);

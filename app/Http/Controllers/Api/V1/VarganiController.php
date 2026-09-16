@@ -34,6 +34,7 @@ class VarganiController
             'paymentMode' => ['nullable', 'in:CASH,UPI,CHEQUE,NET_BANKING'],
             'area' => ['nullable', 'string'],
             'collectorId' => ['nullable', 'string'],
+            'collectorName' => ['nullable', 'string', 'max:120'],
             'startDate' => ['nullable', 'date'],
             'endDate' => ['nullable', 'date'],
             'filter' => ['nullable', 'in:ALL,TODAY,CASH,UPI,CANCELLED'],
@@ -160,6 +161,7 @@ class VarganiController
             'area' => ['required', 'string'],
             'address' => ['nullable', 'string'],
             'collectorId' => ['nullable', 'string'],
+            'collectorName' => ['nullable', 'string', 'max:120'],
             'receiptType' => ['required', 'string', 'in:DIGITAL,PHYSICAL_BOOK'],
             'receiptBookId' => ['nullable', 'string'],
             'notes' => ['nullable', 'string', 'max:250'],
@@ -180,7 +182,16 @@ class VarganiController
             }
         }
 
-        $collectorId = $validated['collectorId'] ?? auth()->id();
+        $collectorId = $validated['collectorId'] ?? null;
+        if (empty($collectorId) && ! empty($validated['collectorName'])) {
+            // Clients (incl. offline replay) may identify the collector by
+            // display name; resolve it against this mandal's active members.
+            $collectorId = MandalMember::where('mandal_id', $festivalModel->mandal_id)
+                ->where('is_active', true)
+                ->whereHas('user', fn ($q) => $q->where('full_name', $validated['collectorName']))
+                ->value('user_id');
+        }
+        $collectorId = $collectorId ?? auth()->id();
 
         try {
             $entry = $this->varganiService->createVargani($festival, [
@@ -234,9 +245,15 @@ class VarganiController
 
         $this->checkMembership($varganiModel->festival);
 
+        $festival = $varganiModel->festival;
+
         return $this->success([
             'id' => $varganiModel->id,
             'receiptNumber' => $varganiModel->receipt_number,
+            'mandalName' => $festival?->mandal?->name,
+            'festivalName' => $festival
+                ? trim($festival->name.' '.($festival->year ?? ''))
+                : null,
             'donorName' => $varganiModel->donor_name,
             'mobileNumber' => $varganiModel->mobile_number,
             'amount' => (float) $varganiModel->amount,
@@ -264,22 +281,22 @@ class VarganiController
             return $this->error('NOT_FOUND', 'Vargani entry not found in this festival', 404);
         }
 
-        $this->checkMembership($vargani->festival);
-
-        if ($vargani->is_cancelled) {
-            return $this->error('VALIDATION_FAILED', 'Receipt is already cancelled', 422);
-        }
+        $this->checkEntryOwnerOrTreasurer($vargani);
 
         $validated = $request->validate([
             'notes' => ['nullable', 'string'],
+            'reason' => ['nullable', 'string'],
         ]);
 
-        $vargani->update([
-            'is_cancelled' => true,
-            'cancelled_at' => now(),
-            'cancelled_by_user_id' => auth()->id(),
-            'notes' => $validated['notes'] ?? $vargani->notes,
-        ]);
+        try {
+            $vargani = $this->varganiService->cancelVargani(
+                $vargani,
+                $validated['notes'] ?? $validated['reason'] ?? null,
+                auth()->id()
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
+        }
 
         CacheKeyService::clearVargani($festival);
 
@@ -300,7 +317,7 @@ class VarganiController
             return $this->error('NOT_FOUND', 'Vargani entry not found in this festival', 404);
         }
 
-        $this->checkMembership($vargani->festival);
+        $this->checkEntryOwnerOrTreasurer($vargani);
 
         if ($request->hasFile('signatureFile')) {
             $path = $request->file('signatureFile')->store('signatures/' . $festival, 'public');
@@ -314,6 +331,8 @@ class VarganiController
             \Illuminate\Support\Facades\Storage::disk('public')->put($path, $data);
             $url = asset('storage/' . $path);
         }
+
+        $vargani->update(['signature_url' => $url]);
 
         CacheKeyService::clearVargani($festival);
 
@@ -452,6 +471,38 @@ $this->checkMembership($vargani->festival);
                 'error' => [
                     'code' => 'FORBIDDEN',
                     'message' => 'Only collectors or admins can record vargani',
+                ],
+            ], 403));
+        }
+    }
+
+    /**
+     * Only the entry's collector or a treasurer/admin may modify it.
+     */
+    protected function checkEntryOwnerOrTreasurer(VarganiEntry $vargani): void
+    {
+        $this->checkMembership($vargani->festival);
+
+        if (auth()->id() === $vargani->collector_id) {
+            return;
+        }
+
+        $role = MandalMember::where('mandal_id', $vargani->festival->mandal_id)
+            ->where('user_id', auth()->id())
+            ->where('is_active', true)
+            ->value('role');
+
+        if (! in_array($role, [
+            \App\Enums\MemberRole::ADMIN,
+            \App\Enums\MemberRole::SUPER_ADMIN,
+            \App\Enums\MemberRole::TREASURER,
+        ], true)) {
+            abort(response()->json([
+                'success' => false,
+                'statusCode' => 403,
+                'error' => [
+                    'code' => 'FORBIDDEN',
+                    'message' => 'Only the entry owner or a treasurer can modify this entry',
                 ],
             ], 403));
         }

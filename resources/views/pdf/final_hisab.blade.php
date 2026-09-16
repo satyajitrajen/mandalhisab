@@ -19,6 +19,7 @@
 </head>
 <body>
     <h1>Final Hisab Report</h1>
+    <p><strong>Mandal:</strong> {{ $festival->mandal?->name ?? '' }}</p>
     <p><strong>Festival:</strong> {{ $festival->name }} ({{ $festival->year }})</p>
     <p><strong>Date:</strong> {{ now()->format('d M Y') }}</p>
 

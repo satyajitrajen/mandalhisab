@@ -51,6 +51,7 @@ trait JwtAuth
             'contact_number' => '9876543210',
             'created_by_user_id' => $user->id,
         ]);
+        $mandal->forceFill(['registration_paid_at' => now()])->save();
 
         $festival = \App\Models\Festival::create([
             'mandal_id' => $mandal->id,

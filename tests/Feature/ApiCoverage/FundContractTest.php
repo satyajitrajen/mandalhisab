@@ -6,6 +6,7 @@ use App\Enums\HandoverStatus;
 use App\Enums\MemberRole;
 use App\Models\BankAccount;
 use App\Models\CashHandover;
+use App\Models\FestivalBalance;
 use App\Models\MoneyTrailEntry;
 use App\Models\OtherIncome;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -46,6 +47,17 @@ class FundContractTest extends TestCase
         $this->withHeaders($this->authHeaders($ctx['user']))
             ->getJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/money-trail?type=CASH_RECEIVED')
             ->assertJsonCount(1, 'data');
+
+        // Regression: query-string page/limit must serialize as ints, not strings.
+        $meta = $this->withHeaders($this->authHeaders($ctx['user']))
+            ->getJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/money-trail?page=1&limit=100')
+            ->assertStatus(200)
+            ->json('meta');
+
+        $this->assertIsInt($meta['currentPage']);
+        $this->assertIsInt($meta['perPage']);
+        $this->assertIsInt($meta['total']);
+        $this->assertIsInt($meta['lastPage']);
     }
 
     public function test_handovers_index_and_show_treasurer_only(): void
@@ -114,6 +126,25 @@ class FundContractTest extends TestCase
         ]);
     }
 
+    public function test_bank_account_accepts_fixed_deposit_type(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/bank-accounts', [
+                'bankName' => 'HDFC',
+                'accountNumber' => '50100234567',
+                'ifscCode' => 'HDFC0001234',
+                'accountType' => 'FIXED_DEPOSIT',
+            ])
+            ->assertStatus(201);
+
+        $this->assertDatabaseHas('bank_accounts', [
+            'festival_id' => $ctx['festival']->id,
+            'account_type' => 'FIXED_DEPOSIT',
+        ]);
+    }
+
     public function test_other_income_index_and_store(): void
     {
         $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
@@ -157,6 +188,10 @@ class FundContractTest extends TestCase
         $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
         $ctx['user']->forceFill(['security_pin' => Hash::make('1234')])->save();
 
+        $balance = FestivalBalance::where('festival_id', $ctx['festival']->id)->first();
+        $balance->cash_collectors = 10000;
+        $balance->save();
+
         $handover = CashHandover::create([
             'festival_id' => $ctx['festival']->id,
             'from_user_id' => $ctx['user']->id,
@@ -194,6 +229,43 @@ class FundContractTest extends TestCase
         $this->assertDatabaseHas('cash_handovers', [
             'id' => $handover->id,
             'status' => HandoverStatus::VERIFIED_ACCEPTED->value,
+        ]);
+    }
+
+    public function test_verify_handover_rejects_amount_above_collector_balance(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
+        $ctx['user']->forceFill(['security_pin' => Hash::make('1234')])->save();
+
+        $balance = FestivalBalance::where('festival_id', $ctx['festival']->id)->first();
+        $balance->cash_collectors = 1000;
+        $balance->save();
+
+        $handover = CashHandover::create([
+            'festival_id' => $ctx['festival']->id,
+            'from_user_id' => $ctx['user']->id,
+            'to_user_id' => $ctx['user']->id,
+            'amount' => 5000,
+            'linked_entry_ids' => [],
+            'linked_entries_count' => 0,
+            'status' => HandoverStatus::PENDING_APPROVAL,
+        ]);
+
+        $this->withHeaders($this->authHeaders($ctx['user'], ['X-Festival-Id' => $ctx['festival']->id]))
+            ->postJson('/api/v1/funds/handovers/' . $handover->id . '/verify', [
+                'status' => 'VERIFIED_ACCEPTED',
+                'pin' => '1234',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'VALIDATION_FAILED');
+
+        // Rejected verify must leave the ledger untouched.
+        $balance->refresh();
+        $this->assertEquals(1000, (float) $balance->cash_collectors);
+        $this->assertEquals(0, (float) $balance->cash_treasurer);
+        $this->assertDatabaseHas('cash_handovers', [
+            'id' => $handover->id,
+            'status' => HandoverStatus::PENDING_APPROVAL->value,
         ]);
     }
 }

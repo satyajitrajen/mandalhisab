@@ -2,8 +2,9 @@
 
 namespace App\Http\Controllers\Api\V1;
 
-use App\Enums\ExpenseCategory;
+use App\Enums\ExpenseStatus;
 use App\Enums\PaymentMode;
+use App\Helpers\CsvSanitizer;
 use App\Models\ExpenseEntry;
 use App\Models\Festival;
 use App\Models\MandalMember;
@@ -11,15 +12,13 @@ use App\Services\CacheKeyService;
 use App\Services\ExpenseService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\DB;
 
 class ExpenseController
 {
     use ApiResponse;
 
-    public function __construct(protected ExpenseService $expenseService)
-    {
-    }
+    public function __construct(protected ExpenseService $expenseService) {}
 
     /**
      * GET /api/v1/festivals/:festivalId/expenses
@@ -85,6 +84,7 @@ class ExpenseController
                 $paymentModeStr = $e->payment_mode instanceof \BackedEnum ? $e->payment_mode->value : (string) $e->payment_mode;
                 $statusStr = $e->status instanceof \BackedEnum ? $e->status->value : (string) $e->status;
                 $dateStr = $e->date instanceof \DateTimeInterface ? $e->date->format('Y-m-d') : (string) $e->date;
+
                 return [
                     'id' => $e->id,
                     'title' => $e->title,
@@ -94,7 +94,7 @@ class ExpenseController
                     'paidTo' => $e->paid_to,
                     'date' => $dateStr,
                     'status' => $statusStr,
-                    'billUrl' => $e->bill_url ? asset('storage/' . $e->bill_url) : null,
+                    'billUrl' => $e->bill_url ? asset('storage/'.$e->bill_url) : null,
                     'billPendingReason' => $e->bill_pending_reason,
                     'notes' => $e->notes,
                     'createdAt' => $e->created_at?->toIso8601String(),
@@ -119,7 +119,7 @@ class ExpenseController
     public function store(Request $request, $festival)
     {
         $festivalModel = Festival::findOrFail($festival);
-        $this->checkMembership($festivalModel);
+        $this->checkTreasurerOrAdmin($festivalModel);
 
         $validated = $request->validate([
             'title' => ['required', 'string', 'max:255'],
@@ -138,7 +138,7 @@ class ExpenseController
         $billUrl = $validated['billUrl'] ?? null;
         if ($request->hasFile('billFile')) {
             $file = $request->file('billFile');
-            $billUrl = $file->store('bills/' . $festival, 'public');
+            $billUrl = $file->store('bills/'.$festival, 'public');
         }
 
         try {
@@ -172,7 +172,7 @@ class ExpenseController
             'paidTo' => $expense->paid_to,
             'date' => $expense->date?->format('Y-m-d'),
             'status' => $expense->status,
-            'billUrl' => $expense->bill_url ? asset('storage/' . $expense->bill_url) : null,
+            'billUrl' => $expense->bill_url ? asset('storage/'.$expense->bill_url) : null,
             'notes' => $expense->notes,
             'createdAt' => $expense->created_at?->toIso8601String(),
         ], 'Expense created successfully', 201);
@@ -211,7 +211,7 @@ class ExpenseController
             'paidTo' => $expenseModel->paid_to,
             'date' => $dateStr,
             'status' => $statusStr,
-            'billUrl' => $expenseModel->bill_url ? asset('storage/' . $expenseModel->bill_url) : null,
+            'billUrl' => $expenseModel->bill_url ? asset('storage/'.$expenseModel->bill_url) : null,
             'billPendingReason' => $expenseModel->bill_pending_reason,
             'notes' => $expenseModel->notes,
             'createdBy' => $expenseModel->createdBy?->full_name ?? $expenseModel->creator?->full_name,
@@ -225,6 +225,7 @@ class ExpenseController
      */
     public function update(Request $request, ...$args)
     {
+        $festivalId = count($args) === 2 ? $args[0] : null;
         $expenseId = count($args) === 2 ? $args[1] : $args[0];
         $expenseModel = $expenseId instanceof ExpenseEntry ? $expenseId : ExpenseEntry::find($expenseId);
 
@@ -232,7 +233,13 @@ class ExpenseController
             return $this->error('NOT_FOUND', 'Expense not found', 404);
         }
 
-        $this->checkMembership($expenseModel->festival);
+        // The path festival and the expense's own festival must agree, or a
+        // treasurer of another mandal could route around HisabLocked.
+        if ($festivalId !== null && $expenseModel->festival_id !== $festivalId) {
+            return $this->error('NOT_FOUND', 'Expense not found in this festival', 404);
+        }
+
+        $this->checkTreasurerOrAdmin($expenseModel->festival);
 
         $validated = $request->validate([
             'title' => ['nullable', 'string', 'max:255'],
@@ -241,6 +248,8 @@ class ExpenseController
             'paidTo' => ['nullable', 'string', 'max:255'],
             'date' => ['nullable', 'date'],
             'notes' => ['nullable', 'string', 'max:250'],
+            'paymentMode' => ['nullable', 'string', 'in:CASH,UPI,CHEQUE,NET_BANKING'],
+            'billPendingReason' => ['nullable', 'string'],
         ]);
 
         $updateData = array_filter([
@@ -250,9 +259,28 @@ class ExpenseController
             'paid_to' => $validated['paidTo'] ?? null,
             'date' => $validated['date'] ?? null,
             'notes' => $validated['notes'] ?? null,
+            'payment_mode' => $validated['paymentMode'] ?? null,
+            'bill_pending_reason' => $validated['billPendingReason'] ?? null,
         ], fn ($v) => $v !== null);
 
-        $expenseModel->update($updateData);
+        // Editing amount/mode on a PAID expense must re-sync the ledger in the
+        // same transaction; if the revised terms overdraw a bucket, the row
+        // update rolls back too and the client gets a validation error.
+        $wasPaid = $expenseModel->status === ExpenseStatus::PAID;
+        $oldAmount = (float) $expenseModel->amount;
+        $oldMode = $expenseModel->payment_mode;
+
+        try {
+            DB::transaction(function () use ($expenseModel, $updateData, $wasPaid, $oldAmount, $oldMode) {
+                $expenseModel->update($updateData);
+
+                if ($wasPaid && (isset($updateData['amount']) || isset($updateData['payment_mode']))) {
+                    $this->expenseService->adjustPaidExpense($expenseModel, $oldAmount, $oldMode);
+                }
+            });
+        } catch (\InvalidArgumentException $e) {
+            return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
+        }
 
         CacheKeyService::clearExpenses($expenseModel->festival_id);
 
@@ -278,14 +306,14 @@ class ExpenseController
             return $this->error('NOT_FOUND', 'Expense not found in this festival', 404);
         }
 
-        $this->checkMembership($expenseModel->festival);
+        $this->checkTreasurerOrAdmin($expenseModel->festival);
 
         $request->validate([
             'billFile' => ['required', 'file', 'mimes:jpg,jpeg,png,pdf', 'max:5120'],
         ]);
 
         $file = $request->file('billFile');
-        $path = $file->store('bills/' . $festival, 'public');
+        $path = $file->store('bills/'.$festival, 'public');
 
         $expenseModel->update([
             'bill_url' => $path,
@@ -296,7 +324,7 @@ class ExpenseController
 
         return $this->success([
             'id' => $expenseModel->id,
-            'billUrl' => asset('storage/' . $path),
+            'billUrl' => asset('storage/'.$path),
         ], 'Bill uploaded successfully');
     }
 
@@ -310,7 +338,7 @@ class ExpenseController
             return $this->error('NOT_FOUND', 'Expense not found in this festival', 404);
         }
 
-        $this->checkMembership($expenseModel->festival);
+        $this->checkTreasurerOrAdmin($expenseModel->festival);
 
         if ($expenseModel->status->value === 'PAID') {
             return $this->error('VALIDATION_FAILED', 'Expense is already marked as paid', 422);
@@ -322,6 +350,8 @@ class ExpenseController
 
         try {
             $expense = $this->expenseService->markPaid($expense);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
         } catch (\Exception $e) {
             return $this->error('INTERNAL_ERROR', $e->getMessage(), 500);
         }
@@ -358,14 +388,14 @@ class ExpenseController
         $csv = "Title,Category,Amount,Payment Mode,Paid To,Date,Status\n";
         foreach ($expenses as $e) {
             $csv .= implode(',', [
-                \App\Helpers\CsvSanitizer::cell($e->title),
+                CsvSanitizer::cell($e->title),
                 $e->category->value,
                 $e->amount,
                 $e->payment_mode->value,
-                \App\Helpers\CsvSanitizer::cell($e->paid_to),
+                CsvSanitizer::cell($e->paid_to),
                 $e->date?->format('Y-m-d'),
                 $e->status->value,
-            ]) . "\n";
+            ])."\n";
         }
 
         return response($csv, 200, $headers);
@@ -385,6 +415,32 @@ class ExpenseController
                 'error' => [
                     'code' => 'FORBIDDEN',
                     'message' => 'You are not a member of this mandal',
+                ],
+            ], 403));
+        }
+    }
+
+    /**
+     * Expense writes are restricted to ADMIN/TREASURER (RBAC matrix).
+     */
+    protected function checkTreasurerOrAdmin(Festival $festival): void
+    {
+        $membership = MandalMember::where('mandal_id', $festival->mandal_id)
+            ->where('user_id', auth()->id())
+            ->where('is_active', true)
+            ->first();
+
+        $allowed = ['ADMIN', 'SUPER_ADMIN', 'TREASURER'];
+        $role = $membership?->role;
+        $roleValue = $role instanceof \BackedEnum ? $role->value : $role;
+
+        if (! $membership || ! in_array($roleValue, $allowed, true)) {
+            abort(response()->json([
+                'success' => false,
+                'statusCode' => 403,
+                'error' => [
+                    'code' => 'FORBIDDEN',
+                    'message' => 'Only ADMIN or TREASURER can manage expenses',
                 ],
             ], 403));
         }

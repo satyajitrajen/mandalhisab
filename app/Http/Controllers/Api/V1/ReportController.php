@@ -6,14 +6,15 @@ use App\Enums\AuthMethod;
 use App\Enums\ExpenseStatus;
 use App\Enums\MemberRole;
 use App\Enums\PaymentMode;
-use App\Models\ExpenseEntry;
 use App\Models\Festival;
 use App\Models\FinalHisabAudit;
 use App\Models\MandalMember;
-use App\Models\OtherIncome;
-use App\Models\VarganiEntry;
+use App\Models\User;
 use App\Services\CacheKeyService;
+use App\Services\FestivalFinancials;
+use App\Services\NotificationService;
 use App\Traits\ApiResponse;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\View;
@@ -22,9 +23,35 @@ class ReportController
 {
     use ApiResponse;
 
+    public function __construct(
+        protected FestivalFinancials $financials,
+        protected NotificationService $notifications,
+    ) {}
+
     protected function resolveFestival($festivalId): Festival
     {
         return Festival::findOrFail($festivalId);
+    }
+
+    /**
+     * Mandal / festival labels for client PDFs. Festival year is appended
+     * only when the stored name does not already include it.
+     *
+     * @return array{mandalName: string, festivalName: string}
+     */
+    protected function hisabIdentity(Festival $festival): array
+    {
+        $festival->loadMissing('mandal');
+        $name = trim((string) $festival->name);
+        $year = $festival->year !== null ? (string) $festival->year : '';
+        if ($year !== '' && $name !== '' && ! str_contains($name, $year)) {
+            $name .= ' '.$year;
+        }
+
+        return [
+            'mandalName' => $festival->mandal?->name ?? '',
+            'festivalName' => $name !== '' ? $name : ($year !== '' ? $year : 'Festival'),
+        ];
     }
 
     protected function checkAdminOrTreasurer(Festival $festival): void
@@ -65,13 +92,15 @@ class ReportController
         $cacheKey = CacheKeyService::reportsOverview($festival);
 
         return CacheKeyService::remember($cacheKey, CacheKeyService::TTL_REPORTS_OVERVIEW, function () use ($festivalModel) {
+            $totals = $this->financials->forFestival($festivalModel);
             $varganiQuery = $festivalModel->varganiEntries()->where('is_cancelled', false);
 
-            $totalVargani = (float) $varganiQuery->sum('amount');
-            $totalExpenses = (float) $festivalModel->expenseEntries()->sum('amount');
-            $totalOtherIncome = (float) $festivalModel->otherIncomes()->sum('amount');
-            $openingBalance = (float) ($festivalModel->opening_balance ?? 0);
-            $netBalance = $totalVargani + $totalOtherIncome + $openingBalance - $totalExpenses;
+            $totalVargani = $totals['vargani_total'];
+            $totalExpenses = $totals['paid_expenses'];
+            $totalOtherIncome = $totals['other_income_total'];
+            $openingBalance = $totals['opening_balance'];
+            $totalIncome = $totals['total_income'];
+            $netBalance = $totals['closing_balance'];
 
             $totalDonors = $varganiQuery->clone()->count();
             $totalReceipts = $totalDonors;
@@ -81,6 +110,7 @@ class ReportController
             $totalBank = (float) $varganiQuery->clone()->whereIn('payment_mode', [PaymentMode::CHEQUE, PaymentMode::NET_BANKING])->sum('amount');
 
             $expenseByCategory = $festivalModel->expenseEntries()
+                ->where('status', ExpenseStatus::PAID)
                 ->select('category', DB::raw('SUM(amount) as total'))
                 ->groupBy('category')
                 ->get()
@@ -104,6 +134,7 @@ class ReportController
                 ]);
 
             $dailyExpenses = $festivalModel->expenseEntries()
+                ->where('status', ExpenseStatus::PAID)
                 ->where('date', '>=', $thirtyDaysAgo->toDateString())
                 ->select('date', DB::raw('SUM(amount) as total'))
                 ->groupBy('date')
@@ -116,9 +147,12 @@ class ReportController
 
             return $this->success([
                 'totalVargani' => $totalVargani,
-                'totalExpenses' => $totalExpenses,
                 'totalOtherIncome' => $totalOtherIncome,
+                'totalIncome' => $totalIncome,
+                'openingBalance' => $openingBalance,
+                'totalExpenses' => $totalExpenses,
                 'netBalance' => $netBalance,
+                'closingBalance' => $netBalance,
                 'totalDonors' => $totalDonors,
                 'totalReceipts' => $totalReceipts,
                 'totalCash' => $totalCash,
@@ -156,19 +190,30 @@ class ReportController
         ]));
         $cacheKey = CacheKeyService::reportsTyped($festival, $reportType, $paramsHash);
 
-        return CacheKeyService::remember($cacheKey, CacheKeyService::TTL_REPORTS_TYPED, function () use ($festivalModel, $reportType, $startDate, $endDate) {
-            switch ($reportType) {
-                case 'vargani_summary':
-                    return $this->varganiSummary($festivalModel, $startDate, $endDate);
-                case 'expense_summary':
-                    return $this->expenseSummary($festivalModel, $startDate, $endDate);
-                case 'fund_summary':
-                    return $this->fundSummary($festivalModel);
-                case 'member_activity':
-                    return $this->memberActivity($festivalModel, $startDate, $endDate);
-                default:
-                    return $this->error('INVALID_REPORT_TYPE', 'Unsupported report type', 400);
-            }
+        $normalized = match ($reportType) {
+            'collections', 'vargani_summary' => 'vargani_summary',
+            'expenses', 'expense_summary' => 'expense_summary',
+            'cash', 'fund_summary' => 'fund_summary',
+            'collectors', 'member_activity' => 'member_activity',
+            'income-expense' => 'income_expense',
+            'receipt-books' => 'receipt_books',
+            default => null,
+        };
+
+        if ($normalized === null) {
+            return $this->error('INVALID_REPORT_TYPE', 'Unsupported report type', 400);
+        }
+
+        return CacheKeyService::remember($cacheKey, CacheKeyService::TTL_REPORTS_TYPED, function () use ($festivalModel, $normalized, $startDate, $endDate) {
+            return match ($normalized) {
+                'vargani_summary' => $this->varganiSummary($festivalModel, $startDate, $endDate),
+                'expense_summary' => $this->expenseSummary($festivalModel, $startDate, $endDate),
+                'fund_summary' => $this->fundSummary($festivalModel),
+                'member_activity' => $this->memberActivity($festivalModel, $startDate, $endDate),
+                'income_expense' => $this->incomeExpense($festivalModel, $startDate, $endDate),
+                'receipt_books' => $this->receiptBooksReport($festivalModel),
+                default => $this->error('INVALID_REPORT_TYPE', 'Unsupported report type', 400),
+            };
         });
     }
 
@@ -203,9 +248,18 @@ class ReportController
                 'count' => (int) $row->count,
             ]);
 
+        $total = (float) $query->sum('amount');
+        $rows = $byPaymentMode->map(fn ($row) => [
+            'label' => $row['paymentMode'],
+            'amount' => $row['total'],
+            'pending' => $row['count'].' receipts',
+        ])->values();
+
         return $this->success([
+            'totalAmount' => $total,
             'byPaymentMode' => $byPaymentMode,
             'byArea' => $byArea,
+            'rows' => $rows,
         ], 'Vargani summary retrieved');
     }
 
@@ -240,9 +294,18 @@ class ReportController
                 'count' => (int) $row->count,
             ]);
 
+        $total = (float) $query->sum('amount');
+        $rows = $byCategory->map(fn ($row) => [
+            'label' => $row['category'],
+            'amount' => $row['total'],
+            'pending' => $row['count'].' bills',
+        ])->values();
+
         return $this->success([
+            'totalAmount' => $total,
             'byCategory' => $byCategory,
             'byStatus' => $byStatus,
+            'rows' => $rows,
         ], 'Expense summary retrieved');
     }
 
@@ -294,10 +357,18 @@ class ReportController
             ],
         ];
 
+        $totalCollected = $cashTotal + $upiTotal + $bankTotal;
+        $rows = collect($buckets)->map(fn ($bucket) => [
+            'label' => $bucket['bucket'],
+            'amount' => $bucket['balance'],
+        ])->values();
+
         return $this->success([
             'buckets' => $buckets,
-            'totalCollected' => $cashTotal + $upiTotal + $bankTotal,
+            'totalAmount' => $totalCollected,
+            'totalCollected' => $totalCollected,
             'totalExpenses' => $cashExpenses + (float) $festival->expenseEntries()->where('status', ExpenseStatus::PAID)->whereIn('payment_mode', [PaymentMode::UPI, PaymentMode::CHEQUE, PaymentMode::NET_BANKING])->sum('amount'),
+            'rows' => $rows,
         ], 'Fund summary retrieved');
     }
 
@@ -345,7 +416,81 @@ class ReportController
             ];
         });
 
-        return $this->success($activity, 'Member activity retrieved');
+        $rows = $activity->map(fn ($row) => [
+            'label' => $row['name'] ?? 'Member',
+            'amount' => $row['varganiSum'],
+            'pending' => $row['role'].' · '.$row['varganiCount'].' receipts',
+        ])->values();
+
+        return $this->success([
+            'totalAmount' => (float) $activity->sum('varganiSum'),
+            'activity' => $activity,
+            'rows' => $rows,
+        ], 'Member activity retrieved');
+    }
+
+    protected function incomeExpense(Festival $festival, ?string $startDate, ?string $endDate)
+    {
+        $varganiQuery = $festival->varganiEntries()->where('is_cancelled', false);
+        $expenseQuery = $festival->expenseEntries();
+        $otherQuery = $festival->otherIncomes();
+
+        if ($startDate) {
+            $varganiQuery->whereDate('created_at', '>=', $startDate);
+            $expenseQuery->whereDate('date', '>=', $startDate);
+            $otherQuery->whereDate('date', '>=', $startDate);
+        }
+        if ($endDate) {
+            $varganiQuery->whereDate('created_at', '<=', $endDate);
+            $expenseQuery->whereDate('date', '<=', $endDate);
+            $otherQuery->whereDate('date', '<=', $endDate);
+        }
+
+        $vargani = (float) $varganiQuery->sum('amount');
+        $other = (float) $otherQuery->sum('amount');
+        $expenses = (float) $expenseQuery->where('status', ExpenseStatus::PAID)->sum('amount');
+        $income = $vargani + $other;
+
+        return $this->success([
+            'totalAmount' => $income,
+            'totals' => [
+                'vargani' => $vargani,
+                'otherIncome' => $other,
+                'income' => $income,
+                'expenses' => $expenses,
+                'net' => $income - $expenses,
+            ],
+            'rows' => [
+                ['label' => 'Vargani', 'amount' => $vargani],
+                ['label' => 'Other income', 'amount' => $other],
+                ['label' => 'Expenses', 'amount' => $expenses],
+                ['label' => 'Net', 'amount' => $income - $expenses],
+            ],
+        ], 'Income vs expense retrieved');
+    }
+
+    protected function receiptBooksReport(Festival $festival)
+    {
+        $books = $festival->receiptBooks()->with('assignedTo')->get();
+        $rows = $books->map(function ($book) {
+            $range = $book->end_number - $book->start_number + 1;
+            $used = (int) $book->used_count;
+
+            return [
+                'label' => 'Book '.$book->book_number,
+                'amount' => $used,
+                'pending' => ($book->assignedTo?->full_name ?? 'Unassigned')
+                    .' · '.($book->status?->value ?? ''),
+                'used' => $used,
+                'available' => max(0, $range - $used),
+                'assignedTo' => $book->assignedTo?->full_name,
+            ];
+        })->values();
+
+        return $this->success([
+            'totalAmount' => (int) $books->sum('used_count'),
+            'rows' => $rows,
+        ], 'Receipt book report retrieved');
     }
 
     /**
@@ -364,7 +509,12 @@ class ReportController
             $audit = FinalHisabAudit::where('festival_id', $festivalModel->id)->first();
 
             if ($audit) {
-                return $this->success([
+                $signerNames = User::whereIn('id', array_filter([
+                    $audit->president_user_id,
+                    $audit->treasurer_user_id,
+                ]))->pluck('full_name', 'id');
+
+                return $this->success(array_merge($this->hisabIdentity($festivalModel), [
                     'id' => $audit->id,
                     'festivalId' => $audit->festival_id,
                     'openingBalance' => (float) $audit->opening_balance,
@@ -375,6 +525,8 @@ class ReportController
                     'closingBalance' => (float) $audit->closing_balance,
                     'presidentSigned' => (bool) $audit->president_signed,
                     'treasurerSigned' => (bool) $audit->treasurer_signed,
+                    'presidentName' => $audit->president_user_id ? $signerNames->get($audit->president_user_id) : null,
+                    'treasurerName' => $audit->treasurer_user_id ? $signerNames->get($audit->treasurer_user_id) : null,
                     'presidentSignedAt' => $audit->president_signed_at?->toIso8601String(),
                     'treasurerSignedAt' => $audit->treasurer_signed_at?->toIso8601String(),
                     'presidentUserId' => $audit->president_user_id,
@@ -382,7 +534,7 @@ class ReportController
                     'treasurerAuthMethod' => $audit->treasurer_auth_method?->value,
                     'isLocked' => (bool) $audit->is_locked,
                     'pdfReportUrl' => $audit->pdf_report_url,
-                ], 'Final hisab retrieved');
+                ]), 'Final hisab retrieved');
             }
 
             $openingBalance = (float) ($festivalModel->opening_balance ?? 0);
@@ -392,7 +544,7 @@ class ReportController
             $totalExpenses = (float) $festivalModel->expenseEntries()->where('status', ExpenseStatus::PAID)->sum('amount');
             $closingBalance = $totalIncome - $totalExpenses;
 
-            return $this->success([
+            return $this->success(array_merge($this->hisabIdentity($festivalModel), [
                 'festivalId' => $festivalModel->id,
                 'openingBalance' => $openingBalance,
                 'varganiTotal' => $varganiTotal,
@@ -402,6 +554,8 @@ class ReportController
                 'closingBalance' => $closingBalance,
                 'presidentSigned' => false,
                 'treasurerSigned' => false,
+                'presidentName' => null,
+                'treasurerName' => null,
                 'presidentSignedAt' => null,
                 'treasurerSignedAt' => null,
                 'presidentUserId' => null,
@@ -409,7 +563,7 @@ class ReportController
                 'treasurerAuthMethod' => null,
                 'isLocked' => false,
                 'pdfReportUrl' => null,
-            ], 'Final hisab computed live');
+            ]), 'Final hisab computed live');
         });
     }
 
@@ -479,6 +633,8 @@ class ReportController
             ]);
         }
 
+        $wasLocked = (bool) $audit->is_locked;
+
         if ($role === 'PRESIDENT') {
             $audit->update([
                 'president_signed' => true,
@@ -498,6 +654,9 @@ class ReportController
 
         if ($audit->president_signed && $audit->treasurer_signed) {
             $audit->update(['is_locked' => true]);
+            if (! $wasLocked) {
+                $this->notifications->notifyFinalHisabLocked($festivalModel);
+            }
         }
 
         CacheKeyService::forget(CacheKeyService::reportsFinalHisab($festivalModel->id));
@@ -519,6 +678,7 @@ class ReportController
     public function finalHisabPdf($festival)
     {
         $festivalModel = $this->resolveFestival($festival);
+        $festivalModel->loadMissing('mandal');
         $this->checkAdminOrTreasurer($festivalModel);
 
         $audit = FinalHisabAudit::where('festival_id', $festivalModel->id)->first();
@@ -556,13 +716,15 @@ class ReportController
                 'closingBalance' => $closingBalance,
                 'presidentSigned' => false,
                 'treasurerSigned' => false,
+                'presidentName' => null,
+                'treasurerName' => null,
                 'presidentSignedAt' => null,
                 'treasurerSignedAt' => null,
                 'isLocked' => false,
             ];
         }
 
-        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadHTML(View::make('pdf.final_hisab', $data)->render());
+        $pdf = Pdf::loadHTML(View::make('pdf.final_hisab', $data)->render());
 
         return response($pdf->output(), 200, [
             'Content-Type' => 'application/pdf',

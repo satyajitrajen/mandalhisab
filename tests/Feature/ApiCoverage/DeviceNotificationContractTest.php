@@ -113,6 +113,16 @@ class DeviceNotificationContractTest extends TestCase
             ->assertStatus(404);
     }
 
+    public function test_broadcast_update_requires_super_admin(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::ADMIN->value);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/app/broadcast-update', [])
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'FORBIDDEN');
+    }
+
     public function test_mark_all_read(): void
     {
         $ctx = $this->makeFestivalContext(MemberRole::MEMBER->value);

@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\ReceiptBookStatus;
 use App\Models\Festival;
+use App\Models\FinalHisabAudit;
 use App\Models\MandalMember;
 use App\Models\ReceiptBook;
+use App\Models\VarganiEntry;
 use App\Services\CacheKeyService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
@@ -87,6 +89,7 @@ class ReceiptBookController
             'startNumber' => ['required', 'integer', 'min:1'],
             'endNumber' => ['required', 'integer', 'gt:startNumber'],
             'assignedToId' => ['nullable', 'string'],
+            'assignedTo' => ['nullable', 'string', 'max:120'],
             'assignedDate' => ['nullable', 'date'],
         ]);
 
@@ -102,12 +105,33 @@ class ReceiptBookController
             return $this->error('CONFLICT', 'Receipt book number range overlaps with an existing book in this festival', 409);
         }
 
+        // Book entries record the pre-printed number itself, so the range must
+        // not collide with receipts already issued from the festival sequence.
+        $issuedCollision = VarganiEntry::where('festival_id', $festival)
+            ->whereBetween('receipt_number', [$validated['startNumber'], $validated['endNumber']])
+            ->exists();
+
+        if ($issuedCollision) {
+            return $this->error('CONFLICT', 'Receipt book number range overlaps receipts already issued in this festival', 409);
+        }
+
+        $assignedToId = $validated['assignedToId'] ?? null;
+        if (empty($assignedToId) && ! empty($validated['assignedTo'])) {
+            // Clients may identify the assignee by display name; resolve it
+            // against this mandal's active members so a same-named user in
+            // another mandal can't receive the book (mirrors assign()).
+            $assignedToId = MandalMember::where('mandal_id', $festivalModel->mandal_id)
+                ->where('is_active', true)
+                ->whereHas('user', fn ($q) => $q->where('full_name', $validated['assignedTo']))
+                ->value('user_id');
+        }
+
         $book = ReceiptBook::create([
             'festival_id' => $festival,
             'book_number' => $validated['bookNumber'],
             'start_number' => $validated['startNumber'],
             'end_number' => $validated['endNumber'],
-            'assigned_to_user_id' => $validated['assignedToId'] ?? null,
+            'assigned_to_user_id' => $assignedToId,
             'assigned_date' => $validated['assignedDate'] ?? null,
             'status' => ReceiptBookStatus::ACTIVE,
         ]);
@@ -157,15 +181,27 @@ class ReceiptBookController
     {
         $this->checkMembership($book->festival);
 
+        if ($this->isHisabLocked($book->festival_id)) {
+            return $this->error('HISAB_LOCKED', 'Final hisab is locked. No further changes are allowed.', 409);
+        }
+
         $collector = $request->input('collectorId') ?? $request->input('collectorName') ?? $request->input('assignedTo');
         if (empty($collector)) {
             return $this->error('VALIDATION_FAILED', 'The collectorId field is required.', 422);
         }
 
-        $user = \App\Models\User::where('id', $collector)
-            ->orWhere('full_name', $collector)
-            ->orWhere('phone', $collector)
-            ->first();
+        // The assignee must be an active member of this mandal, whether the
+        // client identifies them by id, name, or phone.
+        $assignedUserId = MandalMember::where('mandal_id', $book->festival->mandal_id)
+            ->where('is_active', true)
+            ->whereHas('user', function ($q) use ($collector) {
+                $q->where('id', $collector)
+                    ->orWhere('full_name', $collector)
+                    ->orWhere('phone', $collector);
+            })
+            ->value('user_id');
+
+        $user = $assignedUserId ? \App\Models\User::find($assignedUserId) : null;
 
         if (! $user) {
             return $this->error('VALIDATION_FAILED', 'Selected collector was not found', 422);
@@ -193,6 +229,10 @@ class ReceiptBookController
     {
         $this->checkMembership($book->festival);
 
+        if ($this->isHisabLocked($book->festival_id)) {
+            return $this->error('HISAB_LOCKED', 'Final hisab is locked. No further changes are allowed.', 409);
+        }
+
         $validated = $request->validate([
             'status' => ['required', Rule::enum(ReceiptBookStatus::class)],
             'notes' => ['nullable', 'string'],
@@ -208,6 +248,13 @@ class ReceiptBookController
             'id' => $book->id,
             'status' => $book->status->value,
         ], 'Receipt book status updated');
+    }
+
+    protected function isHisabLocked(string $festivalId): bool
+    {
+        return FinalHisabAudit::where('festival_id', $festivalId)
+            ->where('is_locked', true)
+            ->exists();
     }
 
     protected function checkMembership(Festival $festival): void

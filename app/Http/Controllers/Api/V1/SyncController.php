@@ -6,21 +6,22 @@ use App\Models\CashHandover;
 use App\Models\ExpenseEntry;
 use App\Models\Festival;
 use App\Models\FundTransfer;
+use App\Models\MandalMember;
 use App\Models\OtherIncome;
-use App\Models\ReceiptSequence;
 use App\Models\VarganiEntry;
+use App\Services\ExpenseService;
+use App\Services\VarganiService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class SyncController
 {
     use ApiResponse;
 
     public function __construct(
-        protected \App\Services\VarganiService $varganiService,
-        protected \App\Services\ExpenseService $expenseService
+        protected VarganiService $varganiService,
+        protected ExpenseService $expenseService
     ) {}
 
     /**
@@ -60,12 +61,7 @@ class SyncController
                         default => throw new \InvalidArgumentException('Unsupported type'),
                     };
                 } else {
-                    // update stub – can be expanded later
-                    $result = [
-                        'status' => 'success',
-                        'serverId' => $data['id'] ?? null,
-                        'message' => 'Update action not fully implemented yet',
-                    ];
+                    throw new \InvalidArgumentException('Offline update is not supported. Re-open the record online to edit.');
                 }
 
                 $results[] = [
@@ -247,6 +243,22 @@ class SyncController
             ];
         }
 
+        // Expense writes are restricted to ADMIN/TREASURER (RBAC matrix).
+        $mandalId = Festival::find($festivalId)?->mandal_id;
+        $role = MandalMember::where('mandal_id', $mandalId)
+            ->where('user_id', auth()->id())
+            ->where('is_active', true)
+            ->value('role');
+        $roleValue = $role instanceof \BackedEnum ? $role->value : (string) $role;
+
+        if (! in_array($roleValue, ['ADMIN', 'SUPER_ADMIN', 'TREASURER'], true)) {
+            return [
+                'status' => 'error',
+                'serverId' => null,
+                'message' => 'Only ADMIN or TREASURER can create expenses',
+            ];
+        }
+
         if ($clientUuid) {
             $existing = ExpenseEntry::where('festival_id', $festivalId)
                 ->where('client_uuid', $clientUuid)
@@ -316,6 +328,7 @@ class SyncController
         if ($enum instanceof \BackedEnum) {
             return $enum->value;
         }
+
         return is_string($enum) ? $enum : null;
     }
 

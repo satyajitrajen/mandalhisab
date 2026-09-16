@@ -8,12 +8,15 @@ use App\Models\Festival;
 use App\Models\FestivalBalance;
 use App\Models\MandalMember;
 use App\Models\ReceiptSequence;
+use App\Services\FestivalFinancials;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
 class FestivalController
 {
     use ApiResponse;
+
+    public function __construct(protected FestivalFinancials $financials) {}
 
     /**
      * GET /api/v1/mandals/:mandalId/festivals
@@ -42,14 +45,13 @@ class FestivalController
         }
 
         if (! empty($validated['search'])) {
-            $query->where('name', 'like', '%' . $validated['search'] . '%');
+            $query->where('name', 'like', '%'.$validated['search'].'%');
         }
 
         $festivals = $query->orderBy('start_date', 'desc')->get();
 
         $data = $festivals->map(function ($festival) {
-            $totalCollection = $festival->varganiEntries()->where('is_cancelled', false)->sum('amount');
-            $totalExpense = $festival->expenseEntries()->where('status', 'PAID')->sum('amount');
+            $totals = $this->financials->forFestival($festival);
 
             return [
                 'id' => $festival->id,
@@ -60,10 +62,11 @@ class FestivalController
                 'endDate' => $festival->end_date?->format('Y-m-d'),
                 'status' => $festival->status->value,
                 'budgetGoal' => (float) $festival->budget_goal,
-                'totalCollection' => (float) $totalCollection,
-                'totalExpense' => (float) $totalExpense,
-                'closingBalance' => (float) ($totalCollection - $totalExpense),
-                'progressRatio' => $festival->budget_goal > 0 ? round($totalCollection / $festival->budget_goal, 3) : 0,
+                'totalCollection' => $totals['vargani_total'],
+                'otherIncome' => $totals['other_income_total'],
+                'totalExpense' => $totals['paid_expenses'],
+                'closingBalance' => $totals['closing_balance'],
+                'progressRatio' => $totals['progress_ratio'],
                 'description' => $festival->description,
             ];
         });
@@ -154,8 +157,7 @@ class FestivalController
             return $this->error('FORBIDDEN', 'You are not a member of this mandal', 403);
         }
 
-        $totalCollection = $festivalModel->varganiEntries()->where('is_cancelled', false)->sum('amount');
-        $totalExpense = $festivalModel->expenseEntries()->where('status', 'PAID')->sum('amount');
+        $totals = $this->financials->forFestival($festivalModel);
 
         return $this->success([
             'id' => $festivalModel->id,
@@ -166,11 +168,12 @@ class FestivalController
             'endDate' => $festivalModel->end_date?->format('Y-m-d'),
             'status' => $festivalModel->status->value,
             'budgetGoal' => (float) $festivalModel->budget_goal,
-            'openingBalance' => (float) $festivalModel->opening_balance,
+            'openingBalance' => $totals['opening_balance'],
             'description' => $festivalModel->description,
-            'totalCollection' => (float) $totalCollection,
-            'totalExpense' => (float) $totalExpense,
-            'closingBalance' => (float) ($totalCollection - $totalExpense),
+            'totalCollection' => $totals['vargani_total'],
+            'otherIncome' => $totals['other_income_total'],
+            'totalExpense' => $totals['paid_expenses'],
+            'closingBalance' => $totals['closing_balance'],
             'createdAt' => $festivalModel->created_at,
             'updatedAt' => $festivalModel->updated_at,
         ], 'Festival details retrieved');
@@ -216,15 +219,27 @@ class FestivalController
         $updateData = [];
 
         if ($isAdmin) {
-            if (isset($validated['name'])) $updateData['name'] = $validated['name'];
-            if (isset($validated['startDate'])) $updateData['start_date'] = $validated['startDate'];
-            if (isset($validated['endDate'])) $updateData['end_date'] = $validated['endDate'];
-            if (isset($validated['description'])) $updateData['description'] = $validated['description'];
-            if (isset($validated['status'])) $updateData['status'] = FestivalStatus::from($validated['status']);
+            if (isset($validated['name'])) {
+                $updateData['name'] = $validated['name'];
+            }
+            if (isset($validated['startDate'])) {
+                $updateData['start_date'] = $validated['startDate'];
+            }
+            if (isset($validated['endDate'])) {
+                $updateData['end_date'] = $validated['endDate'];
+            }
+            if (isset($validated['description'])) {
+                $updateData['description'] = $validated['description'];
+            }
+            if (isset($validated['status'])) {
+                $updateData['status'] = FestivalStatus::from($validated['status']);
+            }
         }
 
         if ($isAdmin || $isTreasurer) {
-            if (isset($validated['budgetGoal'])) $updateData['budget_goal'] = $validated['budgetGoal'];
+            if (isset($validated['budgetGoal'])) {
+                $updateData['budget_goal'] = $validated['budgetGoal'];
+            }
         }
 
         $festivalModel->update($updateData);

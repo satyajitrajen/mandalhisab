@@ -19,12 +19,17 @@ class AccountDeletionRequest extends Model
         'mandal_name',
         'reason',
         'status',
+        'source',
         'user_id',
+        'scheduled_for',
         'completed_at',
+        'cancelled_at',
     ];
 
     protected $casts = [
+        'scheduled_for' => 'datetime',
         'completed_at' => 'datetime',
+        'cancelled_at' => 'datetime',
     ];
 
     public function getIdPrefix(): string

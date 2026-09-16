@@ -111,4 +111,43 @@ class VarganiTest extends TestCase
         $this->assertCount(2, $numbers);
         $this->assertEquals([1, 2], $numbers->map(fn ($n) => (int) $n)->all());
     }
+
+    public function test_cancel_reverses_balance_and_appends_reversal_trail(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani', $this->varganiPayload([
+                'amount' => 1500,
+            ]))
+            ->assertStatus(201);
+
+        $entry = VarganiEntry::where('festival_id', $ctx['festival']->id)->firstOrFail();
+
+        $balance = FestivalBalance::where('festival_id', $ctx['festival']->id)->first();
+        $this->assertEquals(1500, (float) $balance->cash_collectors);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani/' . $entry->id . '/cancel', [
+                'reason' => 'Wrong amount entered',
+            ])
+            ->assertStatus(200);
+
+        // Reversal must restore the ledger bucket to zero.
+        $balance->refresh();
+        $this->assertEquals(0, (float) $balance->cash_collectors);
+
+        // A negative audit-trail entry records the reversal (original retained).
+        $this->assertDatabaseHas('money_trail_entries', [
+            'festival_id' => $ctx['festival']->id,
+            'reference_id' => $entry->id,
+            'amount' => 1500,
+            'is_positive' => false,
+        ]);
+
+        // Cancelling twice is rejected.
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani/' . $entry->id . '/cancel', [])
+            ->assertStatus(422);
+    }
 }

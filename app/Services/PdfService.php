@@ -33,7 +33,7 @@ class PdfService
      */
     public function generateFinalHisabPdf(string $festivalId, FinalHisabAudit $audit): string
     {
-        $festival = Festival::findOrFail($festivalId);
+        $festival = Festival::with('mandal')->findOrFail($festivalId);
 
         $pdf = Pdf::loadView('pdf.final_hisab', [
             'festival' => $festival,

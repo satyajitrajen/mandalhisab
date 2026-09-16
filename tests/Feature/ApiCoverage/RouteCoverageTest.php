@@ -20,6 +20,7 @@ class RouteCoverageTest extends TestCase
     private const MANIFEST = [
         // --- Public (6) ---
         'GET api/v1/config/app' => 'Tests\Feature\Api\V1\HealthCheckTest',
+        'GET api/v1/app/version' => 'Tests\Feature\Api\V1\HealthCheckTest',
         'GET api/v1/public/receipts/{receiptNumber}' => 'Tests\Feature\ApiCoverage\VarganiContractTest',
         'POST api/v1/public/account-deletion-request' => 'Tests\Feature\AuthTest',
         'POST api/v1/auth/register' => 'Tests\Feature\AuthTest',
@@ -34,7 +35,12 @@ class RouteCoverageTest extends TestCase
         'PUT api/v1/auth/me' => 'Tests\Feature\ApiCoverage\AuthContractTest',
         'PUT api/v1/auth/security-pin' => 'Tests\Feature\ApiCoverage\AuthContractTest',
         'PUT api/v1/auth/password' => 'Tests\Feature\ApiCoverage\AuthContractTest',
+        'POST api/v1/auth/me/cancel-deletion' => 'Tests\Feature\AuthTest',
         'DELETE api/v1/auth/me' => 'Tests\Feature\AuthTest',
+
+        // --- Payments (2) ---
+        'POST api/v1/payments/create-order' => 'Tests\Feature\ApiCoverage\PaymentContractTest',
+        'POST api/v1/payments/verify' => 'Tests\Feature\ApiCoverage\PaymentContractTest',
 
         // --- Mandals (5) ---
         'GET api/v1/mandals' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
@@ -42,6 +48,12 @@ class RouteCoverageTest extends TestCase
         'GET api/v1/mandals/{mandal}' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
         'PUT api/v1/mandals/{mandal}' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
         'DELETE api/v1/mandals/{mandal}' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
+
+        // --- Areas (4) ---
+        'GET api/v1/mandals/{mandal}/areas' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
+        'POST api/v1/mandals/{mandal}/areas' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
+        'PUT api/v1/areas/{area}' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
+        'DELETE api/v1/areas/{area}' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
 
         // --- Festivals (4) ---
         'GET api/v1/mandals/{mandal}/festivals' => 'Tests\Feature\FestivalTest',
@@ -91,13 +103,16 @@ class RouteCoverageTest extends TestCase
         'POST api/v1/festivals/{festival}/funds/transfers' => 'Tests\Feature\FundFlowTest',
         'POST api/v1/festivals/{festival}/other-income' => 'Tests\Feature\ApiCoverage\FundContractTest',
 
-        // --- Members (6) ---
+        // --- Members (8) ---
         'GET api/v1/mandals/{mandal}/members' => 'Tests\Feature\ApiCoverage\MemberContractTest',
         'POST api/v1/mandals/{mandal}/members' => 'Tests\Feature\ApiCoverage\MemberContractTest',
         'GET api/v1/members/{member}' => 'Tests\Feature\ApiCoverage\MemberContractTest',
         'PUT api/v1/members/{member}' => 'Tests\Feature\ApiCoverage\MemberContractTest',
+        'PUT api/v1/mandals/{mandal}/members/{member}' => 'Tests\Feature\ApiCoverage\MemberContractTest',
         'GET api/v1/mandals/{mandal}/members/{member}/financial-summary' => 'Tests\Feature\ApiCoverage\MemberContractTest',
         'POST api/v1/mandals/{mandal}/members/{member}/deactivate' => 'Tests\Feature\ApiCoverage\MemberContractTest',
+        'POST api/v1/mandals/{mandal}/members/{member}/reactivate' => 'Tests\Feature\ApiCoverage\MemberContractTest',
+        'POST api/v1/mandals/{mandal}/members/{member}/reset-login' => 'Tests\Feature\ApiCoverage\MemberContractTest',
 
         // --- Reports (6) ---
         'GET api/v1/festivals/{festival}/reports/overview' => 'Tests\Feature\ApiCoverage\ReportContractTest',
@@ -111,6 +126,7 @@ class RouteCoverageTest extends TestCase
         'GET api/v1/notifications' => 'Tests\Feature\ApiCoverage\DeviceNotificationContractTest',
         'PATCH api/v1/notifications/{notification}/read' => 'Tests\Feature\ApiCoverage\DeviceNotificationContractTest',
         'POST api/v1/notifications/read-all' => 'Tests\Feature\ApiCoverage\DeviceNotificationContractTest',
+        'POST api/v1/app/broadcast-update' => 'Tests\Feature\ApiCoverage\DeviceNotificationContractTest',
 
         // --- Sync & Events (3) ---
         'POST api/v1/sync/batch' => 'Tests\Feature\ApiCoverage\SyncContractTest',

@@ -38,7 +38,7 @@ class ReportContractTest extends TestCase
     {
         $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
 
-        foreach (['vargani_summary', 'expense_summary', 'fund_summary', 'member_activity'] as $type) {
+        foreach (['vargani_summary', 'expense_summary', 'fund_summary', 'member_activity', 'income-expense', 'collections', 'expenses', 'collectors', 'receipt-books', 'cash'] as $type) {
             $this->withHeaders($this->authHeaders($ctx['user']))
                 ->getJson('/api/v1/festivals/' . $ctx['festival']->id . '/reports/' . $type)
                 ->assertStatus(200, "Report type {$type} should be supported");
@@ -64,12 +64,15 @@ class ReportContractTest extends TestCase
             ->assertStatus(200)
             ->assertJsonStructure([
                 'data' => [
-                    'festivalId', 'openingBalance', 'varganiTotal', 'otherIncomeTotal',
+                    'festivalId', 'mandalName', 'festivalName',
+                    'openingBalance', 'varganiTotal', 'otherIncomeTotal',
                     'totalIncome', 'totalExpenses', 'closingBalance',
                     'presidentSigned', 'treasurerSigned', 'isLocked',
                 ],
             ])
-            ->assertJsonPath('data.openingBalance', 0);
+            ->assertJsonPath('data.openingBalance', 0)
+            ->assertJsonPath('data.mandalName', 'Test Mandal')
+            ->assertJsonPath('data.festivalName', 'Ganesh Utsav 2025');
     }
 
     public function test_treasurer_signs_final_hisab(): void

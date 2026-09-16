@@ -18,14 +18,18 @@ class DeviceController
     public function register(Request $request)
     {
         $validated = $request->validate([
-            'deviceToken' => ['required', 'string', 'max:500'],
-            'platform' => ['required', 'in:android,ios,web,windows'],
+            'deviceToken' => ['nullable', 'string', 'max:500'],
+            'token' => ['nullable', 'string', 'max:500'],
+            'platform' => ['nullable', 'in:android,ios,web,windows'],
             'deviceId' => ['nullable', 'string', 'max:255'],
         ]);
 
         $user = $request->user();
-        $token = $validated['deviceToken'];
-        $platform = $validated['platform'];
+        $token = $validated['deviceToken'] ?? $validated['token'] ?? '';
+        if ($token === '') {
+            return $this->error('VALIDATION_FAILED', 'A device token is required', 422);
+        }
+        $platform = $validated['platform'] ?? 'android';
 
         // Upsert: update existing token for this user+platform, or create new
         $existing = DeviceToken::where('user_id', $user->id)
