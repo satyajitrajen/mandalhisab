@@ -261,6 +261,17 @@ class FundController
         $fromUserId = $validated['fromUserId'] ?? $validated['collectorId'] ?? auth()->id();
         $toUserId = $validated['toUserId'] ?? null;
 
+        // Handover records attribute the money movement to specific users;
+        // unvalidated ids could point at a stranger or a user from another mandal.
+        $mandalUserIds = MandalMember::where('mandal_id', $festivalModel->mandal_id)
+            ->where('is_active', true)
+            ->pluck('user_id');
+        foreach (array_filter([$fromUserId, $toUserId]) as $partyId) {
+            if (! $mandalUserIds->contains($partyId)) {
+                return $this->error('VALIDATION_FAILED', 'Handover parties must be active members of this mandal', 422);
+            }
+        }
+
         // Calculate linked entries info
         $linkedIds = $validated['linkedEntryIds'] ?? [];
         $linkedCount = count($linkedIds);
@@ -421,7 +432,8 @@ class FundController
         } catch (\InvalidArgumentException $e) {
             return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
         } catch (\Exception $e) {
-            return $this->error('INTERNAL_ERROR', $e->getMessage(), 500);
+            report($e);
+            return $this->error('INTERNAL_ERROR', 'Could not verify handover', 500);
         }
 
         CacheKeyService::clearFunds($handoverModel->festival_id);
@@ -585,7 +597,8 @@ class FundController
         } catch (\InvalidArgumentException $e) {
             return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
         } catch (\Exception $e) {
-            return $this->error('INTERNAL_ERROR', $e->getMessage(), 500);
+            report($e);
+            return $this->error('INTERNAL_ERROR', 'Could not complete transfer', 500);
         }
 
         CacheKeyService::clearFunds($festival);

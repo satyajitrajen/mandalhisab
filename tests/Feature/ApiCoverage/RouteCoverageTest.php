@@ -118,6 +118,7 @@ class RouteCoverageTest extends TestCase
         'GET api/v1/festivals/{festival}/reports/overview' => 'Tests\Feature\ApiCoverage\ReportContractTest',
         'GET api/v1/festivals/{festival}/reports/final-hisab' => 'Tests\Feature\ApiCoverage\ReportContractTest',
         'POST api/v1/festivals/{festival}/reports/final-hisab/sign' => 'Tests\Feature\ApiCoverage\ReportContractTest',
+        'POST api/v1/festivals/{festival}/reports/final-hisab/unlock' => 'Tests\Feature\HisabLockedTest',
         'GET api/v1/festivals/{festival}/reports/final-hisab/pdf' => 'Tests\Feature\ApiCoverage\ReportContractTest',
         'GET api/v1/festivals/{festival}/reports/{reportType}' => 'Tests\Feature\ApiCoverage\ReportContractTest',
 

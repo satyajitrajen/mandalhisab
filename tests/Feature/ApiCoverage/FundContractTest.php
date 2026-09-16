@@ -268,4 +268,38 @@ class FundContractTest extends TestCase
             'status' => HandoverStatus::PENDING_APPROVAL->value,
         ]);
     }
+
+    public function test_handover_submit_rejects_parties_outside_mandal(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $outsider = \App\Models\User::factory()->create();
+
+        $url = '/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers';
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($url, [
+                'fromUserId' => $outsider->id,
+                'amount' => 1000,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'VALIDATION_FAILED');
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($url, [
+                'toUserId' => $outsider->id,
+                'amount' => 1000,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'VALIDATION_FAILED');
+
+        $this->assertDatabaseCount('cash_handovers', 0);
+
+        // A member of the mandal remains a valid from-party.
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($url, [
+                'fromUserId' => $ctx['user']->id,
+                'amount' => 1000,
+            ])
+            ->assertStatus(201);
+    }
 }

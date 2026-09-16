@@ -300,6 +300,10 @@ class MemberController
             });
         } catch (\RuntimeException $e) {
             return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Raw DB messages can embed SQL; never echo them back.
+            report($e);
+            return $this->error('INTERNAL_ERROR', 'Could not create member', 500);
         }
 
         CacheKeyService::clearMembers($mandal);
