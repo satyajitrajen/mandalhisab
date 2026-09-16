@@ -146,6 +146,7 @@ Route::prefix('v1')->group(function () {
         Route::get('festivals/{festival}/reports/overview', [ReportController::class, 'overview']);
         Route::get('festivals/{festival}/reports/final-hisab', [ReportController::class, 'finalHisab']);
         Route::post('festivals/{festival}/reports/final-hisab/sign', [ReportController::class, 'signFinalHisab']);
+        Route::post('festivals/{festival}/reports/final-hisab/unlock', [ReportController::class, 'unlockFinalHisab'])->middleware('role:SUPER_ADMIN');
         Route::get('festivals/{festival}/reports/final-hisab/pdf', [ReportController::class, 'finalHisabPdf']);
         Route::get('festivals/{festival}/reports/{reportType}', [ReportController::class, 'typedReport']);
 

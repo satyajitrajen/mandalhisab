@@ -183,4 +183,135 @@ class HisabLockedTest extends TestCase
             'status' => HandoverStatus::PENDING_APPROVAL->value,
         ]);
     }
+
+    public function test_unlock_requires_super_admin(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::ADMIN->value);
+        $this->lockFestival($ctx['festival']->id, $ctx['user']->id);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/reports/final-hisab/unlock', [
+                'pin' => '1234',
+            ])
+            ->assertStatus(403);
+
+        $this->assertDatabaseHas('final_hisab_audits', [
+            'festival_id' => $ctx['festival']->id,
+            'is_locked' => true,
+        ]);
+    }
+
+    public function test_super_admin_can_unlock_with_pin(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::SUPER_ADMIN->value);
+        $ctx['user']->forceFill(['security_pin' => \Illuminate\Support\Facades\Hash::make('1234')])->save();
+        $this->lockFestival($ctx['festival']->id, $ctx['user']->id);
+
+        $headers = $this->authHeaders($ctx['user']);
+        $url = '/api/v1/festivals/' . $ctx['festival']->id . '/reports/final-hisab/unlock';
+
+        $this->withHeaders($headers)
+            ->postJson($url, ['pin' => '9999'])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'INVALID_PIN');
+
+        $this->withHeaders($headers)
+            ->postJson($url, [])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'PIN_REQUIRED');
+
+        $this->withHeaders($headers)
+            ->postJson($url, ['pin' => '1234'])
+            ->assertStatus(200)
+            ->assertJsonPath('data.isLocked', false);
+
+        $this->assertDatabaseHas('final_hisab_audits', [
+            'festival_id' => $ctx['festival']->id,
+            'is_locked' => false,
+        ]);
+
+        // After unlocking, financial mutations work again.
+        $this->withHeaders($headers)
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/vargani', [
+                'donorName' => 'Post Unlock Donor',
+                'amount' => 100,
+                'paymentMode' => 'CASH',
+                'area' => 'Area 1',
+                'receiptType' => 'DIGITAL',
+            ])
+            ->assertStatus(201);
+    }
+
+    public function test_unlock_rejected_when_not_locked(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::SUPER_ADMIN->value);
+        $ctx['user']->forceFill(['security_pin' => \Illuminate\Support\Facades\Hash::make('1234')])->save();
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/reports/final-hisab/unlock', [
+                'pin' => '1234',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'VALIDATION_FAILED');
+    }
+
+    public function test_resign_after_unlock_refreshes_frozen_snapshot(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::SUPER_ADMIN->value);
+        $ctx['user']->forceFill(['security_pin' => \Illuminate\Support\Facades\Hash::make('1234')])->save();
+
+        $headers = $this->authHeaders($ctx['user']);
+        $base = '/api/v1/festivals/' . $ctx['festival']->id;
+        $varganiPayload = fn (string $donor, float $amount) => [
+            'donorName' => $donor,
+            'amount' => $amount,
+            'paymentMode' => 'CASH',
+            'area' => 'Area 1',
+            'receiptType' => 'DIGITAL',
+        ];
+
+        $this->withHeaders($headers)
+            ->postJson($base . '/vargani', $varganiPayload('First Donor', 500))
+            ->assertStatus(201);
+
+        $this->withHeaders($headers)
+            ->postJson($base . '/reports/final-hisab/sign', ['role' => 'TREASURER', 'authMethod' => 'PIN'])
+            ->assertStatus(200);
+        $this->withHeaders($headers)
+            ->postJson($base . '/reports/final-hisab/sign', ['role' => 'PRESIDENT', 'authMethod' => 'PIN'])
+            ->assertStatus(200);
+
+        $this->assertDatabaseHas('final_hisab_audits', [
+            'festival_id' => $ctx['festival']->id,
+            'vargani_total' => 500,
+            'closing_balance' => 500,
+            'is_locked' => true,
+        ]);
+
+        $this->withHeaders($headers)
+            ->postJson($base . '/reports/final-hisab/unlock', ['pin' => '1234'])
+            ->assertStatus(200);
+
+        $this->withHeaders($headers)
+            ->postJson($base . '/vargani', $varganiPayload('Second Donor', 200))
+            ->assertStatus(201);
+
+        // Re-sign after corrections: the snapshot must cover the corrected
+        // numbers, not the pre-unlock totals.
+        $this->withHeaders($headers)
+            ->postJson($base . '/reports/final-hisab/sign', ['role' => 'TREASURER', 'authMethod' => 'PIN'])
+            ->assertStatus(200);
+
+        $this->assertDatabaseHas('final_hisab_audits', [
+            'festival_id' => $ctx['festival']->id,
+            'vargani_total' => 700,
+            'total_income' => 700,
+            'closing_balance' => 700,
+        ]);
+
+        $this->withHeaders($headers)
+            ->getJson($base . '/reports/final-hisab')
+            ->assertStatus(200)
+            ->assertJsonPath('data.varganiTotal', fn ($v) => (float) $v === 700.0);
+    }
 }

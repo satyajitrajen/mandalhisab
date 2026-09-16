@@ -17,6 +17,7 @@ use App\Traits\ApiResponse;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\View;
 
 class ReportController
@@ -611,14 +612,14 @@ class ReportController
 
         $audit = FinalHisabAudit::where('festival_id', $festivalModel->id)->first();
 
-        if (! $audit) {
-            $openingBalance = (float) ($festivalModel->opening_balance ?? 0);
-            $varganiTotal = (float) $festivalModel->varganiEntries()->where('is_cancelled', false)->sum('amount');
-            $otherIncomeTotal = (float) $festivalModel->otherIncomes()->sum('amount');
-            $totalIncome = $openingBalance + $varganiTotal + $otherIncomeTotal;
-            $totalExpenses = (float) $festivalModel->expenseEntries()->where('status', ExpenseStatus::PAID)->sum('amount');
-            $closingBalance = $totalIncome - $totalExpenses;
+        $openingBalance = (float) ($festivalModel->opening_balance ?? 0);
+        $varganiTotal = (float) $festivalModel->varganiEntries()->where('is_cancelled', false)->sum('amount');
+        $otherIncomeTotal = (float) $festivalModel->otherIncomes()->sum('amount');
+        $totalIncome = $openingBalance + $varganiTotal + $otherIncomeTotal;
+        $totalExpenses = (float) $festivalModel->expenseEntries()->where('status', ExpenseStatus::PAID)->sum('amount');
+        $closingBalance = $totalIncome - $totalExpenses;
 
+        if (! $audit) {
             $audit = FinalHisabAudit::create([
                 'festival_id' => $festivalModel->id,
                 'opening_balance' => $openingBalance,
@@ -630,6 +631,17 @@ class ReportController
                 'president_signed' => false,
                 'treasurer_signed' => false,
                 'is_locked' => false,
+            ]);
+        } elseif (! $audit->is_locked) {
+            // After unlock, entries may have been corrected; the re-signature
+            // must cover the corrected numbers, not the pre-unlock snapshot.
+            $audit->update([
+                'opening_balance' => $openingBalance,
+                'vargani_total' => $varganiTotal,
+                'other_income_total' => $otherIncomeTotal,
+                'total_income' => $totalIncome,
+                'total_expenses' => $totalExpenses,
+                'closing_balance' => $closingBalance,
             ]);
         }
 
@@ -668,6 +680,64 @@ class ReportController
             'treasurerSigned' => (bool) $audit->treasurer_signed,
             'isLocked' => (bool) $audit->is_locked,
         ], 'Final hisab signed successfully');
+    }
+
+    /**
+     * Unlock a locked final hisab so financial entries can be corrected.
+     * SUPER_ADMIN only: the lock is created by two signatures, so undoing it
+     * requires a higher privilege than signing, confirmed by the security PIN.
+     *
+     * Middleware: role:SUPER_ADMIN
+     */
+    public function unlockFinalHisab(Request $request, $festival)
+    {
+        $festivalModel = $this->resolveFestival($festival);
+
+        $membership = MandalMember::where('mandal_id', $festivalModel->mandal_id)
+            ->where('user_id', auth()->id())
+            ->where('is_active', true)
+            ->first();
+
+        if (! $membership) {
+            return $this->error('FORBIDDEN', 'You are not a member of this mandal', 403);
+        }
+
+        $validated = $request->validate([
+            'pin' => ['nullable', 'string', 'digits:4'],
+        ]);
+
+        $user = auth()->user();
+        if (empty($user->security_pin)) {
+            return $this->error('PIN_NOT_SET', 'Set a security PIN in Profile settings before unlocking the final hisab', 422);
+        }
+
+        if (empty($validated['pin'])) {
+            return $this->error('PIN_REQUIRED', 'Security PIN is required to unlock the final hisab', 422);
+        }
+
+        if (! Hash::check($validated['pin'], $user->security_pin)) {
+            return $this->error('INVALID_PIN', 'The entered PIN is incorrect', 422);
+        }
+
+        $audit = FinalHisabAudit::where('festival_id', $festivalModel->id)->first();
+
+        if (! $audit || ! $audit->is_locked) {
+            return $this->error('VALIDATION_FAILED', 'Final hisab is not locked', 422);
+        }
+
+        $audit->update(['is_locked' => false]);
+
+        $this->notifications->notifyFinalHisabUnlocked($festivalModel);
+
+        CacheKeyService::forget(CacheKeyService::reportsFinalHisab($festivalModel->id));
+        CacheKeyService::forget(CacheKeyService::reportsOverview($festivalModel->id));
+
+        return $this->success([
+            'id' => $audit->id,
+            'presidentSigned' => (bool) $audit->president_signed,
+            'treasurerSigned' => (bool) $audit->treasurer_signed,
+            'isLocked' => false,
+        ], 'Final hisab unlocked');
     }
 
     /**

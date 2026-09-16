@@ -168,6 +168,28 @@ class NotificationService
         );
     }
 
+    public function notifyFinalHisabUnlocked(Festival $festival): void
+    {
+        $userIds = MandalMember::query()
+            ->where('mandal_id', $festival->mandal_id)
+            ->where('is_active', true)
+            ->whereNotNull('user_id')
+            ->pluck('user_id')
+            ->unique()
+            ->values()
+            ->all();
+
+        $this->notifyUsers(
+            userIds: $userIds,
+            mandalId: (string) $festival->mandal_id,
+            festivalId: (string) $festival->id,
+            title: 'Final Hisab Unlocked',
+            body: sprintf('%s was unlocked by the mandal owner. Entries can be corrected.', $festival->name),
+            type: NotificationType::FINAL_HISAB_SIGNED,
+            referenceId: $festival->id,
+        );
+    }
+
     /**
      * Mark a single notification as read.
      */
