@@ -211,10 +211,28 @@ class SyncController
             $mobileNumber = (strlen($digits) >= 10) ? substr($digits, -10) : $digits;
         }
 
-        $collectorId = $data['collectorId'] ?? auth()->id();
-        if (! empty($data['collectorId'])) {
+        $collectorId = $data['collectorId'] ?? null;
+        if (empty($collectorId) && ! empty($data['collectorName'])) {
+            // Mirror the direct API: resolve display names against this
+            // mandal's active members instead of silently attributing to
+            // the caller.
+            $collectorId = MandalMember::where('mandal_id', Festival::where('id', $festivalId)->value('mandal_id'))
+                ->where('is_active', true)
+                ->whereHas('user', fn ($q) => $q->where('full_name', $data['collectorName']))
+                ->value('user_id');
+
+            if (empty($collectorId)) {
+                return [
+                    'status' => 'error',
+                    'serverId' => null,
+                    'message' => 'Collector must be an active member of this mandal',
+                ];
+            }
+        }
+
+        if (! empty($collectorId)) {
             $collectorIsMember = MandalMember::where('mandal_id', Festival::where('id', $festivalId)->value('mandal_id'))
-                ->where('user_id', $data['collectorId'])
+                ->where('user_id', $collectorId)
                 ->where('is_active', true)
                 ->exists();
 
@@ -226,6 +244,8 @@ class SyncController
                 ];
             }
         }
+
+        $collectorId = $collectorId ?? auth()->id();
 
         try {
             $entry = $this->varganiService->createVargani($festivalId, [

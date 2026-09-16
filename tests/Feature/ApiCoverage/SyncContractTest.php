@@ -32,7 +32,7 @@ class SyncContractTest extends TestCase
                         'amount' => 2000,
                         'paymentMode' => 'CASH',
                         'area' => 'Hadapsar',
-                        'collectorName' => 'Sagar',
+                        'collectorName' => $ctx['user']->full_name,
                         'receiptType' => 'DIGITAL',
                     ],
                 ],
@@ -63,7 +63,7 @@ class SyncContractTest extends TestCase
                 'amount' => 500,
                 'paymentMode' => 'UPI',
                 'area' => 'Kothrud',
-                'collectorName' => 'Sagar',
+                'collectorName' => $ctx['user']->full_name,
                 'receiptType' => 'DIGITAL',
             ],
         ]]];
@@ -159,6 +159,37 @@ class SyncContractTest extends TestCase
         ]);
     }
 
+    public function test_batch_push_rejects_unresolvable_collector_name(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+
+        $this->withHeaders($this->authHeaders($ctx['user'], [
+            'X-Festival-Id' => $ctx['festival']->id,
+            'X-Mandal-Id' => $ctx['mandal']->id,
+        ]))->postJson('/api/v1/sync/batch', [
+            'payload' => [[
+                'type' => 'vargani',
+                'action' => 'create',
+                'clientUuid' => 'uuid-bad-name',
+                'data' => [
+                    'donorName' => 'Ghost Collector',
+                    'amount' => 300,
+                    'paymentMode' => 'CASH',
+                    'area' => 'Kothrud',
+                    'collectorName' => 'Nobody By That Name',
+                    'receiptType' => 'DIGITAL',
+                ],
+            ]],
+        ])->assertStatus(200)
+            ->assertJsonPath('data.results.0.status', 'error')
+            ->assertJsonPath('data.results.0.message', 'Collector must be an active member of this mandal');
+
+        $this->assertDatabaseMissing('vargani_entries', [
+            'festival_id' => $ctx['festival']->id,
+            'donor_name' => 'Ghost Collector',
+        ]);
+    }
+
     public function test_sync_batch_blocked_when_hisab_locked(): void
     {
         $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
@@ -189,7 +220,7 @@ class SyncContractTest extends TestCase
                     'amount' => 100,
                     'paymentMode' => 'CASH',
                     'area' => 'Kothrud',
-                    'collectorName' => 'Sagar',
+                    'collectorName' => $ctx['user']->full_name,
                     'receiptType' => 'DIGITAL',
                 ],
             ]],
