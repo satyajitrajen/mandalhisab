@@ -107,6 +107,7 @@ class FundController
                 'totalFunds' => $totalFunds,
                 'totalCollected' => $totalFunds + $totalExpenses,
                 'totalExpenses' => $totalExpenses,
+                'otherIncome' => (float) OtherIncome::where('festival_id', $festival)->sum('amount'),
                 'netBalance' => $totalFunds,
                 'cashInHand' => max(0, $buckets['cash_treasurer'] + $buckets['cash_collectors']),
                 'cashTreasurer' => $buckets['cash_treasurer'],

@@ -24,3 +24,7 @@ test_softdelete.php
 /bootstrap/cache/routes*.php
 /bootstrap/cache/config.php
 
+
+*.log
+.env*
+.commandcode/

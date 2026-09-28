@@ -65,6 +65,7 @@ Route::prefix('v1')->group(function () {
 
         // Mandals & Areas
         Route::apiResource('mandals', MandalController::class);
+        Route::post('mandals/{mandal}/select', [MandalController::class, 'selectMandal']);
         Route::get('mandals/{mandal}/areas', [AreaController::class, 'index']);
         Route::post('mandals/{mandal}/areas', [AreaController::class, 'store']);
         Route::put('areas/{area}', [AreaController::class, 'update']);

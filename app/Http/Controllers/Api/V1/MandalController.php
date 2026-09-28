@@ -31,6 +31,7 @@ class MandalController
                 'id' => $mandal->id,
                 'name' => $mandal->name,
                 'city' => $mandal->city,
+                'contactNumber' => $mandal->contact_number,
                 'role' => $mm->role->value,
                 'isDefault' => $mm->is_default,
                 'logoUrl' => $mandal->logo_url,
@@ -66,6 +67,17 @@ class MandalController
         ]);
 
         $user = $request->user();
+
+        $userPhone = substr(preg_replace('/\D/', '', (string) $user->phone), -10);
+        $mandalContact = substr(preg_replace('/\D/', '', (string) $validated['contactNumber']), -10);
+        if ($userPhone !== '' && $userPhone === $mandalContact) {
+            return $this->error(
+                'VALIDATION_FAILED',
+                'Mandal registered contact number cannot be the same as your member mobile number',
+                422,
+                [['field' => 'contactNumber', 'issue' => 'Mandal registered contact number cannot be the same as your member mobile number']]
+            );
+        }
 
         $mandal = DB::transaction(function () use ($validated, $user) {
             $logoUrl = null;
@@ -177,6 +189,34 @@ class MandalController
             return $this->error('FORBIDDEN', 'Only ADMIN can update mandal details', 403);
         }
 
+        if (! empty($validated['contactNumber'])) {
+            $mandalContact = substr(preg_replace('/\D/', '', (string) $validated['contactNumber']), -10);
+            $userPhone = substr(preg_replace('/\D/', '', (string) $user->phone), -10);
+            if ($userPhone !== '' && $userPhone === $mandalContact) {
+                return $this->error(
+                    'VALIDATION_FAILED',
+                    'Mandal registered contact number cannot be the same as your member mobile number',
+                    422,
+                    [['field' => 'contactNumber', 'issue' => 'Mandal registered contact number cannot be the same as your member mobile number']]
+                );
+            }
+
+            $memberConflict = MandalMember::where('mandal_id', $mandal->id)
+                ->where('is_active', true)
+                ->whereHas('user', function ($q) use ($mandalContact) {
+                    $q->where('phone', $mandalContact);
+                })
+                ->exists();
+            if ($memberConflict) {
+                return $this->error(
+                    'VALIDATION_FAILED',
+                    'Mandal registered contact number cannot be the same as a member mobile number',
+                    422,
+                    [['field' => 'contactNumber', 'issue' => 'Mandal registered contact number cannot be the same as a member mobile number']]
+                );
+            }
+        }
+
         if (! empty($validated['logoBase64'])) {
             $validated['logo_url'] = $this->storeBase64Image($validated['logoBase64'], 'logos');
         }
@@ -224,6 +264,39 @@ class MandalController
         return $this->success(null, 'Mandal archived successfully');
     }
 
+    /**
+     * POST /api/v1/mandals/:mandalId/select
+     *
+     * Set this mandal as the user's active/default mandal.
+     */
+    public function selectMandal(Request $request, Mandal $mandal)
+    {
+        $user = $request->user();
+        $membership = MandalMember::where('mandal_id', $mandal->id)
+            ->where('user_id', $user->id)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $membership) {
+            return $this->error('FORBIDDEN', 'You are not an active member of this mandal', 403);
+        }
+
+        DB::transaction(function () use ($user, $membership) {
+            MandalMember::where('user_id', $user->id)
+                ->where('is_default', true)
+                ->update(['is_default' => false]);
+
+            $membership->update(['is_default' => true]);
+        });
+
+        return $this->success([
+            'id' => $mandal->id,
+            'name' => $mandal->name,
+            'role' => $membership->role->value,
+            'isDefault' => true,
+        ], 'Active mandal selected successfully');
+    }
+
     protected function storeBase64Image(string $base64, string $folder): string
     {
         $data = base64_decode(explode(',', $base64)[1] ?? $base64);
@@ -232,3 +305,4 @@ class MandalController
         return asset('storage/' . $path);
     }
 }
+

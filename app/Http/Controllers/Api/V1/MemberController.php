@@ -9,6 +9,7 @@ use App\Enums\ReceiptBookStatus;
 use App\Models\CashHandover;
 use App\Models\ExpenseEntry;
 use App\Models\Festival;
+use App\Models\Mandal;
 use App\Models\MandalMember;
 use App\Models\ReceiptBook;
 use App\Models\User;
@@ -257,6 +258,20 @@ class MemberController
             'area' => ['nullable', 'string', 'max:255'],
         ]);
 
+        $mandalModel = Mandal::find($mandal);
+        if ($mandalModel && $mandalModel->contact_number) {
+            $mandalContact = substr(preg_replace('/\D/', '', (string) $mandalModel->contact_number), -10);
+            $memberPhone = substr(preg_replace('/\D/', '', (string) $validated['phone']), -10);
+            if ($mandalContact !== '' && $mandalContact === $memberPhone) {
+                return $this->error(
+                    'VALIDATION_FAILED',
+                    'Member mobile number cannot be the same as the Mandal registered contact number',
+                    422,
+                    [['field' => 'phone', 'issue' => 'Member mobile number cannot be the same as the Mandal registered contact number']]
+                );
+            }
+        }
+
         try {
             $created = DB::transaction(function () use ($validated, $mandal) {
                 $existingUser = User::where('phone', $validated['phone'])->first();
@@ -375,12 +390,28 @@ class MemberController
         $newRole = $validated['role'] ?? null;
         $newIsActive = array_key_exists('isActive', $validated) ? $validated['isActive'] : null;
 
-        if ($newPhone !== null && $memberRecord->user && $newPhone !== $memberRecord->user->phone) {
-            $phoneTaken = User::where('phone', $newPhone)
-                ->where('id', '!=', $memberRecord->user_id)
-                ->exists();
-            if ($phoneTaken) {
-                return $this->error('VALIDATION_FAILED', 'This phone number is already in use', 422);
+        if ($newPhone !== null) {
+            $mandalModel = Mandal::find($memberRecord->mandal_id);
+            if ($mandalModel && $mandalModel->contact_number) {
+                $mandalContact = substr(preg_replace('/\D/', '', (string) $mandalModel->contact_number), -10);
+                $memberPhone = substr(preg_replace('/\D/', '', (string) $newPhone), -10);
+                if ($mandalContact !== '' && $mandalContact === $memberPhone) {
+                    return $this->error(
+                        'VALIDATION_FAILED',
+                        'Member mobile number cannot be the same as the Mandal registered contact number',
+                        422,
+                        [['field' => 'phone', 'issue' => 'Member mobile number cannot be the same as the Mandal registered contact number']]
+                    );
+                }
+            }
+
+            if ($memberRecord->user && $newPhone !== $memberRecord->user->phone) {
+                $phoneTaken = User::where('phone', $newPhone)
+                    ->where('id', '!=', $memberRecord->user_id)
+                    ->exists();
+                if ($phoneTaken) {
+                    return $this->error('VALIDATION_FAILED', 'This phone number is already in use', 422);
+                }
             }
         }
 

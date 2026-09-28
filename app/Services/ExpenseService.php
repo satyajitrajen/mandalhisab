@@ -38,11 +38,17 @@ class ExpenseService
             $billUrl = $this->storeBill($festivalId, $data['bill_file']);
         }
 
-        if (empty($billUrl) && empty($data['bill_pending_reason'])) {
+        $status = ExpenseStatus::from($data['status'] ?? 'PAID');
+
+        // Bill is optional for PAID expenses (e.g. small cash/UPI spends
+        // without an invoice). Only PENDING expenses created without a bill
+        // must explain why via bill_pending_reason — otherwise the Add
+        // Expense form (Paid + no photo) always fails with
+        // "Either bill file or bill pending reason is required."
+        if ($status === ExpenseStatus::PENDING && empty($billUrl) && empty($data['bill_pending_reason'])) {
             throw new \InvalidArgumentException('Either bill file or bill pending reason is required.');
         }
 
-        $status = ExpenseStatus::from($data['status'] ?? 'PAID');
         $mode = PaymentMode::from($data['payment_mode']);
         $amount = (float) $data['amount'];
 

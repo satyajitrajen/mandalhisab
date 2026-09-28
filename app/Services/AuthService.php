@@ -48,12 +48,19 @@ class AuthService
 
             $mandal = null;
             if (! empty($data['mandalName'])) {
+                $rawContact = $data['mandalContactNumber'] ?? null;
+                $mandalContact = $rawContact ? $this->extractPhone($rawContact) : null;
+
+                if ($mandalContact && $mandalContact === $phone) {
+                    throw new \InvalidArgumentException('Mandal registered contact number cannot be the same as your personal mobile number.');
+                }
+
                 $mandal = Mandal::create([
                     'name' => $data['mandalName'],
                     'address' => $data['address'] ?? 'Address TBD',
                     'city' => $data['city'] ?? 'City TBD',
                     'pincode' => $data['pincode'] ?? '000000',
-                    'contact_number' => $phone ?? '0000000000',
+                    'contact_number' => $mandalContact ?: '0000000000',
                     'created_by_user_id' => $user->id,
                 ]);
 
