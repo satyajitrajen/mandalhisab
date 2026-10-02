@@ -237,13 +237,37 @@ class VarganiContractTest extends TestCase
         $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
         $entry = $this->makeVargani($ctx);
 
-        $this->getJson('/api/v1/public/receipts/' . $entry->receipt_number)
+        $this->getJson('/api/v1/public/receipts/' . $entry->id)
             ->assertStatus(200)
             ->assertJsonPath('data.donorName', 'Suresh Deshmukh')
             ->assertJsonPath('data.amount', 5000);
 
         $this->getJson('/api/v1/public/receipts/999999')
             ->assertStatus(404);
+    }
+
+    public function test_public_receipt_cannot_be_looked_up_by_sequential_number(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $entry = $this->makeVargani($ctx);
+
+        $this->getJson('/api/v1/public/receipts/' . $entry->receipt_number)
+            ->assertStatus(404);
+
+        $this->get('/r/' . $entry->receipt_number)->assertStatus(404);
+        $this->get('/receipt/' . $entry->receipt_number)->assertStatus(404);
+    }
+
+    public function test_public_web_receipt_masks_mobile_number(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $entry = $this->makeVargani($ctx);
+        $entry->forceFill(['mobile_number' => '9876543210'])->save();
+
+        $this->get('/r/' . $entry->id)
+            ->assertStatus(200)
+            ->assertDontSee('9876543210')
+            ->assertSee('XXXXXX3210');
     }
 
     public function test_cash_receipt_cancel_blocked_when_already_handed_over(): void

@@ -415,13 +415,17 @@ $this->checkMembership($vargani->festival);
     }
 
     /**
-     * GET /api/v1/public/receipts/:receiptNumber
+     * GET /api/v1/public/receipts/:receiptId (entry id or client UUID)
      */
-    public function publicReceipt($receiptNumber)
+    public function publicReceipt($receiptId)
     {
-        $entry = VarganiEntry::where('receipt_number', $receiptNumber)
-            ->where('is_cancelled', false)
-            ->first();
+        // Look up only by unguessable identifiers. Receipt numbers are
+        // sequential and repeat across festivals, so accepting them here would
+        // let anyone enumerate every mandal's donors.
+        $entry = VarganiEntry::findByPublicId((string) $receiptId);
+        if ($entry && $entry->is_cancelled) {
+            $entry = null;
+        }
 
         if (! $entry) {
             return $this->error('NOT_FOUND', 'Receipt not found', 404);

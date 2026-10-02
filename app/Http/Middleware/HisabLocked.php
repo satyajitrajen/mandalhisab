@@ -42,6 +42,14 @@ class HisabLocked
 
     protected function resolveFestivalId(Request $request): ?string
     {
+        // Prefer the festival TenantScope verified (it derives it from the
+        // route resource when the path has none), so a client header can't
+        // point the lock check at a different festival.
+        $scoped = $request->attributes->get('current_festival_id');
+        if (is_string($scoped) && $scoped !== '') {
+            return $scoped;
+        }
+
         $routeFestival = $request->route('festival');
 
         if ($routeFestival instanceof \Illuminate\Database\Eloquent\Model) {

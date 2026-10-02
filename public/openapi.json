@@ -2664,7 +2664,7 @@
         }
       }
     },
-    "/public/receipts/{receiptNumber}": {
+    "/public/receipts/{receiptId}": {
       "get": {
         "tags": [
           "App Config & Public"
@@ -2674,13 +2674,14 @@
         "operationId": "publicReceiptLookup",
         "parameters": [
           {
-            "name": "receiptNumber",
+            "name": "receiptId",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string"
             },
-            "example": "1246"
+            "description": "Vargani entry id or offline client UUID. Sequential receipt numbers are not accepted.",
+            "example": "vrg_aB3dE5fG7hJ9"
           }
         ],
         "responses": {
