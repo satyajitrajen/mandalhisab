@@ -12,7 +12,7 @@ Route::get('/receipts/{id}', [PublicReceiptController::class, 'show'])->withoutM
 Route::get('/r/{id}', [PublicReceiptController::class, 'show'])->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class]);
 
 Route::get('/download', function () {
-    $path = public_path('MandalHishob.apk');
+    $path = public_path('mandalhishob.apk');
     if (! is_file($path)) {
         abort(404);
     }

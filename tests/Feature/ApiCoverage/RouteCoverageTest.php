@@ -46,6 +46,7 @@ class RouteCoverageTest extends TestCase
         'GET api/v1/mandals' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
         'POST api/v1/mandals' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
         'GET api/v1/mandals/{mandal}' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
+        'POST api/v1/mandals/{mandal}/select' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
         'PUT api/v1/mandals/{mandal}' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
         'DELETE api/v1/mandals/{mandal}' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
 
