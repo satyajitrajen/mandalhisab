@@ -26,11 +26,11 @@ class AppUpdateController
             'isForceUpdate' => (bool) config('app.force_update', false),
             'releaseTitleMarathi' => 'नवीन अपडेट उपलब्ध आहे! 🚩',
             'releaseTitleEnglish' => 'New Update Available! 🚩',
-            'releaseNotesMarathi' => "• अधिकृत गणेशोत्सव पावती व थेट व्हॉट्सअ‍ॅप लिंक\n• ऑफलाइन डेटा साठवणूक व स्वयंचलित सिंक\n• नवीन सिंक व अयशस्वी नोंदी व्यवस्थापन\n• कार्यप्रदर्शन सुधारणा आणि बग फिक्सेस",
-            'releaseNotesEnglish' => "• Official Ganeshotsav Receipt & direct WhatsApp link\n• Offline Master Data caching & Auto Sync\n• New Sync & Failed Jobs Manager\n• Performance improvements & bug fixes",
+            'releaseNotesMarathi' => "• रोख हस्तांतरण दुहेरी नोंदवले जाणार नाही\n• हस्तांतरण योग्य खजिनदाराकडेच जाते\n• जमा केलेल्या रोख रकमेपेक्षा जास्त हस्तांतरण करता येत नाही\n• स्पष्ट त्रुटी संदेश व योग्य भूमिका\n• कार्यप्रदर्शन सुधारणा आणि बग फिक्सेस",
+            'releaseNotesEnglish' => "• Cash handovers can no longer be submitted twice\n• Handovers always go to the right treasurer\n• You can't hand over more cash than you collected\n• Clearer error messages and correct role labels\n• Performance improvements & bug fixes",
             'downloadUrl' => rtrim((string) config('app.url'), '/').'/download',
             'apkSizeMb' => (float) config('app.apk_size_mb', 63.3),
-            'releasedAt' => '2026-08-23T03:02:00Z',
+            'releasedAt' => '2026-10-07T00:00:00Z',
         ];
     }
 
