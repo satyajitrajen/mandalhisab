@@ -12,15 +12,11 @@ class PublicReceiptController extends Controller
      */
     public function show(string $id)
     {
-        // Try resolving by primary ID, receipt_number, or client_uuid
+        // Resolve only by unguessable identifiers (entry id or client UUID).
+        // Sequential receipt numbers are not accepted: they repeat across
+        // festivals and would let anyone enumerate donors.
         $cleanId = trim($id);
-        $entry = VarganiEntry::with(['festival.mandal', 'collector'])
-            ->where('id', $cleanId)
-            ->orWhere('receipt_number', $cleanId)
-            ->orWhere('receipt_number', 'Receipt #'.$cleanId)
-            ->orWhere('receipt_number', '#'.$cleanId)
-            ->orWhere('client_uuid', $cleanId)
-            ->first();
+        $entry = VarganiEntry::findByPublicId($cleanId, ['festival.mandal', 'collector']);
 
         if (! $entry) {
             abort(404);
@@ -35,7 +31,7 @@ class PublicReceiptController extends Controller
         $dateText = $entry->created_at ? $entry->created_at->format('d M Y') : date('d M Y');
         $paymentMode = $entry->payment_mode?->value ?? 'CASH';
         $area = $entry->area ?? '';
-        $mobileNumber = $entry->mobile_number ?? '';
+        $mobileNumber = self::maskMobile($entry->mobile_number ?? '');
         $collectorName = $entry->collector?->full_name ?? ($entry->collector?->name ?? '');
         $isCancelled = (bool) $entry->is_cancelled;
 
@@ -59,6 +55,19 @@ class PublicReceiptController extends Controller
             'amountInWordsMarathi' => $amountInWordsMarathi,
             'amountInWordsEnglish' => $amountInWordsEnglish,
         ]);
+    }
+
+    /**
+     * Shows only the last 4 digits so a shared link doesn't expose the full number.
+     */
+    private static function maskMobile(string $mobile): string
+    {
+        $mobile = trim($mobile);
+        if (strlen($mobile) <= 4) {
+            return $mobile;
+        }
+
+        return str_repeat('X', strlen($mobile) - 4).substr($mobile, -4);
     }
 
     /**

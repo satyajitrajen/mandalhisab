@@ -2,6 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\BankAccount;
+use App\Models\CashHandover;
 use App\Models\Festival;
 use App\Models\MandalMember;
 use App\Models\ReceiptBook;
@@ -38,12 +40,20 @@ class TenantScope
         $claimedMandalId = $pathMandalId ?: $headerMandalId;
         $festivalId = $pathFestivalId ?: $headerFestivalId;
 
-        // Shallow routes like /receipt-books/{book} carry no mandal/festival
-        // in the path; derive the tenant from the bound resource instead so
-        // downstream middleware (hisab.locked, role) still have context.
-        $boundBook = $request->route('book');
-        if (! $festivalId && $boundBook instanceof ReceiptBook) {
-            $festivalId = $boundBook->festival_id;
+        // Shallow routes like /receipt-books/{book} or /funds/handovers/{handover}
+        // carry no mandal/festival in the path; derive the tenant from the
+        // resource itself so downstream middleware (hisab.locked, role) check
+        // the right festival. The resource's festival always wins over a
+        // client-supplied header.
+        $resourceFestivalId = $this->resolveResourceFestivalId($request);
+        if ($resourceFestivalId === false) {
+            return $this->error('NOT_FOUND', 'Resource not found', 404);
+        }
+        if ($resourceFestivalId !== null) {
+            if ($festivalId && (string) $festivalId !== (string) $resourceFestivalId) {
+                return $this->error('FORBIDDEN', 'Resource does not belong to the selected festival', 403);
+            }
+            $festivalId = $resourceFestivalId;
         }
 
         // Resolve the festival first and bind the tenant to its owning mandal.
@@ -56,7 +66,7 @@ class TenantScope
                 return $this->error('NOT_FOUND', 'Festival not found', 404);
             }
 
-            if ($claimedMandalId && $festival->mandal_id !== $claimedMandalId) {
+            if ($claimedMandalId && (string) $festival->mandal_id !== (string) $claimedMandalId) {
                 return $this->error('FORBIDDEN', 'Festival does not belong to the selected mandal', 403);
             }
 
@@ -82,5 +92,37 @@ class TenantScope
         }
 
         return $next($request);
+    }
+
+    /**
+     * Route parameters that identify a festival-owned resource, mapped to
+     * the model that owns them.
+     *
+     * @var array<string, class-string<Model>>
+     */
+    protected array $festivalResources = [
+        'book' => ReceiptBook::class,
+        'handover' => CashHandover::class,
+        'account' => BankAccount::class,
+    ];
+
+    /**
+     * Festival id of the resource named in the route, null when the route has
+     * none, or false when the referenced resource doesn't exist.
+     */
+    protected function resolveResourceFestivalId(Request $request): string|false|null
+    {
+        foreach ($this->festivalResources as $param => $modelClass) {
+            $value = $request->route($param);
+            if ($value === null || $value === '') {
+                continue;
+            }
+
+            $model = $value instanceof Model ? $value : $modelClass::find($value);
+
+            return $model?->festival_id ?? false;
+        }
+
+        return null;
     }
 }

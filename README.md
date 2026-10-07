@@ -1,66 +1,56 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# MandalHisab Backend
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Laravel 11 API behind the MandalHisab (मंडळ हिशोब) mobile app: festival vargani (donation) collection, receipt books, expenses, cash handovers, bank/UPI funds, reports and the signed final hisab for Ganesh/festival mandals.
 
-## About Laravel
+## Requirements
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- PHP 8.2+ (8.3 recommended) with `ext-sodium`, `ext-zip`
+- Composer 2
+- MySQL 8 in production (SQLite in-memory is used for tests)
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Local setup
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+```bash
+composer install
+cp .env.example .env
+php artisan key:generate
+php artisan jwt:secret
+php artisan migrate
+php artisan serve
+```
 
-## Learning Laravel
+The API is served under `/api/v1`. Interactive docs are at `/doc`; the raw spec is at `/openapi.json` / `/openapi.yaml`.
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+## Configuration
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+Key `.env` settings (see `.env.example` for the full list):
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+| Setting | Purpose |
+| --- | --- |
+| `JWT_SECRET`, `JWT_TTL`, `JWT_REFRESH_TTL` | Access/refresh token signing and lifetimes |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_REGISTRATION_AMOUNT_PAISE` | Mandal registration fee checkout |
+| `FIREBASE_ENABLED`, `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS` | FCM push notifications (service-account JSON path) |
+| `QUEUE_CONNECTION` | Use `database` in production so pushes are delivered by the queue worker |
+| `APP_LATEST_VERSION`, `APP_MIN_SUPPORTED_VERSION`, `APP_FORCE_UPDATE` | In-app update prompts |
+| `MAIL_*` | Password reset emails |
 
-## Laravel Sponsors
+Never commit `.env`, the Firebase service-account JSON, or signing keys.
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+## Architecture notes
 
-### Premium Partners
+- **Tenancy:** every protected route runs through `TenantScope`, which resolves the mandal/festival from the path, from the resource in the path (`{book}`, `{handover}`, `{account}`), or from the `X-Mandal-Id` / `X-Festival-Id` headers, and verifies active membership. Role checks (`role:` middleware) use that membership.
+- **Final hisab lock:** once a festival's final hisab is signed and locked, `hisab.locked` blocks all financial writes for it.
+- **Offline sync:** writes accept an `Idempotency-Key`; `sync/batch` and `sync/pull` let the app work offline and replay safely.
+- **Public receipts:** donors open `/r/{id}` (web) or `GET /api/v1/public/receipts/{id}`, where `{id}` is the vargani entry id or the client UUID. Sequential receipt numbers are deliberately not accepted.
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[WebReinvent](https://webreinvent.com/)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Jump24](https://jump24.co.uk)**
-- **[Redberry](https://redberry.international/laravel/)**
-- **[Active Logic](https://activelogic.com)**
-- **[byte5](https://byte5.de)**
-- **[OP.GG](https://op.gg)**
+## Tests
 
-## Contributing
+```bash
+php artisan test
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+`tests/Feature/ApiCoverage/RouteCoverageTest.php` fails if any API route has no test, so add a manifest entry when you add a route.
 
-## Code of Conduct
+## Deployment
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
-
-## Security Vulnerabilities
-
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
-
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+See [DEPLOY.md](DEPLOY.md) for shared-hosting deployment, cron/queue setup and Firebase configuration. The Android build served at `/download` lives at `public/mandalhishob.apk`.

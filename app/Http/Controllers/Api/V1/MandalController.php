@@ -286,7 +286,10 @@ class MandalController
                 ->where('is_default', true)
                 ->update(['is_default' => false]);
 
-            $membership->update(['is_default' => true]);
+            // Write via query: the loaded model may already say is_default=true,
+            // in which case update() would see no change and skip the write
+            // after the bulk reset above.
+            MandalMember::whereKey($membership->getKey())->update(['is_default' => true]);
         });
 
         return $this->success([

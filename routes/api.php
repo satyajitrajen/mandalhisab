@@ -33,7 +33,7 @@ Route::prefix('v1')->group(function () {
     // Public & Version Check
     Route::get('config/app', [ConfigController::class, 'appConfig']);
     Route::get('app/version', [AppUpdateController::class, 'checkVersion']);
-    Route::get('public/receipts/{receiptNumber}', [VarganiController::class, 'publicReceipt']);
+    Route::get('public/receipts/{receiptId}', [VarganiController::class, 'publicReceipt'])->middleware('rate.limit');
     Route::post('public/account-deletion-request', [AuthController::class, 'publicAccountDeletionRequest']);
 
     // Auth (public, rate-limited 5/min/IP via rate.limit)

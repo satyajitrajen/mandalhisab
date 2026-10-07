@@ -240,4 +240,25 @@ class MandalFestivalContractTest extends TestCase
     {
         return Mandal::latest('id')->value('id');
     }
+
+    public function test_select_mandal_switches_default_membership(): void
+    {
+        $first = $this->makeFestivalContext(MemberRole::ADMIN->value);
+        $second = $this->makeFestivalContext(MemberRole::TREASURER->value, $first['user']);
+        $secondMandalId = $second['festival']->mandal_id;
+
+        $this->withHeaders($this->authHeaders($first['user']))
+            ->postJson('/api/v1/mandals/'.$secondMandalId.'/select')
+            ->assertStatus(200)
+            ->assertJsonPath('data.id', $secondMandalId)
+            ->assertJsonPath('data.role', 'TREASURER');
+
+        $this->assertSame(1, MandalMember::where('user_id', $first['user']->id)->where('is_default', true)->count());
+        $this->assertDatabaseHas('mandal_members', ['user_id' => $first['user']->id, 'mandal_id' => $secondMandalId, 'is_default' => true]);
+
+        $outsider = User::factory()->create();
+        $this->withHeaders($this->authHeaders($outsider))
+            ->postJson('/api/v1/mandals/'.$secondMandalId.'/select')
+            ->assertStatus(403);
+    }
 }

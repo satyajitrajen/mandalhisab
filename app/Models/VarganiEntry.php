@@ -45,6 +45,30 @@ class VarganiEntry extends Model
         'amount' => 'decimal:2',
     ];
 
+    /**
+     * Resolve a receipt from a publicly shared identifier: the entry id or the
+     * offline client UUID. Both are random; sequential receipt numbers are
+     * deliberately not accepted.
+     */
+    public static function findByPublicId(string $publicId, array $with = []): ?self
+    {
+        $publicId = trim($publicId);
+        if ($publicId === '') {
+            return null;
+        }
+
+        return static::with($with)
+            ->where(function ($q) use ($publicId) {
+                $q->where('id', $publicId);
+                // client_uuid is client-supplied; only match values long
+                // enough to be a real UUID so short guessable ones can't be used.
+                if (strlen($publicId) >= 32) {
+                    $q->orWhere('client_uuid', $publicId);
+                }
+            })
+            ->first();
+    }
+
     public function getIdPrefix(): string
     {
         return 'vrg_';
