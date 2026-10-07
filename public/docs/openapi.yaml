@@ -1881,7 +1881,7 @@ paths:
               schema:
                 type: string
                 format: binary
-  "/public/receipts/{receiptNumber}":
+  "/public/receipts/{receiptId}":
     get:
       tags:
         - App Config & Public
@@ -1889,12 +1889,13 @@ paths:
       description: Enables donors scanning receipt QR code to verify receipt authenticity and view digital copy.
       operationId: publicReceiptLookup
       parameters:
-        - name: receiptNumber
+        - name: receiptId
           in: path
           required: true
           schema:
             type: string
-          example: 1246
+          description: Vargani entry id or offline client UUID. Sequential receipt numbers are not accepted.
+          example: vrg_aB3dE5fG7hJ9
       responses:
         200:
           description: Receipt verified

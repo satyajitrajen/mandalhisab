@@ -68,12 +68,12 @@ class GetAppConfig
 }
 
 #[OA\Get(
-    path: '/public/receipts/{receiptNumber}',
+    path: '/public/receipts/{receiptId}',
     operationId: 'getPublicReceipt',
     summary: 'Public receipt page (limited fields)',
     tags: ['Public'],
     parameters: [
-        new OA\Parameter(name: 'receiptNumber', in: 'path', required: true, description: 'Receipt number', schema: new OA\Schema(type: 'string')),
+        new OA\Parameter(name: 'receiptId', in: 'path', required: true, description: 'Vargani entry id (vrg_...) or offline client UUID. Sequential receipt numbers are not accepted.', schema: new OA\Schema(type: 'string')),
     ],
     responses: [
         new OA\Response(response: 200, description: 'Public receipt data',

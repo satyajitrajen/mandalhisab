@@ -21,7 +21,7 @@ class RouteCoverageTest extends TestCase
         // --- Public (6) ---
         'GET api/v1/config/app' => 'Tests\Feature\Api\V1\HealthCheckTest',
         'GET api/v1/app/version' => 'Tests\Feature\Api\V1\HealthCheckTest',
-        'GET api/v1/public/receipts/{receiptNumber}' => 'Tests\Feature\ApiCoverage\VarganiContractTest',
+        'GET api/v1/public/receipts/{receiptId}' => 'Tests\Feature\ApiCoverage\VarganiContractTest',
         'POST api/v1/public/account-deletion-request' => 'Tests\Feature\AuthTest',
         'POST api/v1/auth/register' => 'Tests\Feature\AuthTest',
         'POST api/v1/auth/login' => 'Tests\Feature\AuthTest',
@@ -46,6 +46,7 @@ class RouteCoverageTest extends TestCase
         'GET api/v1/mandals' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
         'POST api/v1/mandals' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
         'GET api/v1/mandals/{mandal}' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
+        'POST api/v1/mandals/{mandal}/select' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
         'PUT api/v1/mandals/{mandal}' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
         'DELETE api/v1/mandals/{mandal}' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
 
