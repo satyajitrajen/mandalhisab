@@ -56,6 +56,19 @@ class FundController
             ->exists();
     }
 
+    /**
+     * Mandal roles (ADMIN, TREASURER, ...) keyed by user id, so both parties
+     * of a handover are labelled with their real role instead of a guess.
+     */
+    protected function mandalRolesByUser(Festival $festival, array $userIds): array
+    {
+        return MandalMember::where('mandal_id', $festival->mandal_id)
+            ->whereIn('user_id', array_values(array_unique(array_filter($userIds))))
+            ->get(['user_id', 'role'])
+            ->mapWithKeys(fn ($m) => [$m->user_id => $m->role instanceof \BackedEnum ? $m->role->value : (string) $m->role])
+            ->all();
+    }
+
     protected function checkMember(Festival $festival): void
     {
         $membership = MandalMember::where('mandal_id', $festival->mandal_id)
@@ -195,7 +208,7 @@ class FundController
         ]));
         $cacheKey = CacheKeyService::fundsHandovers($festival, $paramsHash);
 
-        return CacheKeyService::remember($cacheKey, CacheKeyService::TTL_FUNDS_HANDOVERS, function () use ($festival, $validated) {
+        return CacheKeyService::remember($cacheKey, CacheKeyService::TTL_FUNDS_HANDOVERS, function () use ($festival, $festivalModel, $validated) {
             $query = CashHandover::where('festival_id', $festival);
 
             if (! empty($validated['status'])) {
@@ -205,14 +218,20 @@ class FundController
             $page = $validated['page'] ?? 1;
             $limit = $validated['limit'] ?? 20;
             $handovers = $query->orderBy('created_at', 'desc')->paginate($limit, ['*'], 'page', $page);
+            $roles = $this->mandalRolesByUser(
+                $festivalModel,
+                $handovers->pluck('from_user_id')->merge($handovers->pluck('to_user_id'))->all()
+            );
 
-            $data = $handovers->map(function ($h) {
+            $data = $handovers->map(function ($h) use ($roles) {
                 return [
                     'id' => $h->id,
                     'fromUser' => $h->fromUser?->full_name,
                     'fromUserId' => $h->from_user_id,
+                    'fromRole' => $roles[$h->from_user_id] ?? null,
                     'toUser' => $h->toUser?->full_name,
                     'toUserId' => $h->to_user_id,
+                    'toRole' => $roles[$h->to_user_id] ?? null,
                     'amount' => (float) $h->amount,
                     'linkedEntriesCount' => $h->linked_entries_count,
                     'linkedDateRange' => $h->linked_date_range,
@@ -257,7 +276,21 @@ class FundController
             'notes' => ['nullable', 'string', 'max:500'],
             'photoBase64' => ['nullable', 'string'],
             'pin' => ['nullable', 'string'],
+            'clientUuid' => ['nullable', 'string', 'max:64'],
         ]);
+
+        // Anyone who has set a security PIN confirms the handover with it.
+        // Collectors cannot set a PIN, so they submit without one; the
+        // treasurer's PIN is still required to approve.
+        $submitter = auth()->user();
+        if (! empty($submitter->security_pin)) {
+            if (empty($validated['pin'])) {
+                return $this->error('PIN_REQUIRED', 'Enter your security PIN to submit this handover', 422);
+            }
+            if (! Hash::check($validated['pin'], $submitter->security_pin)) {
+                return $this->error('INVALID_PIN', 'The entered PIN is incorrect', 422);
+            }
+        }
 
         $fromUserId = $validated['fromUserId'] ?? $validated['collectorId'] ?? auth()->id();
         $toUserId = $validated['toUserId'] ?? null;
@@ -271,6 +304,10 @@ class FundController
             if (! $mandalUserIds->contains($partyId)) {
                 return $this->error('VALIDATION_FAILED', 'Handover parties must be active members of this mandal', 422);
             }
+        }
+
+        if ($toUserId && $toUserId === $fromUserId) {
+            return $this->error('VALIDATION_FAILED', 'Cannot hand over cash to yourself', 422);
         }
 
         // Calculate linked entries info
@@ -313,7 +350,10 @@ class FundController
                 'linked_date_range' => $linkedDateRange,
                 'notes' => $validated['notes'] ?? null,
                 'photo_url' => $photoUrl,
+                'client_uuid' => $validated['clientUuid'] ?? null,
             ], $fromUserId);
+        } catch (\DomainException $e) {
+            return $this->error('VALIDATION_FAILED', $e->getMessage(), 422);
         } catch (\Illuminate\Database\QueryException $e) {
             // The raw DB message can embed SQL and encrypted column values;
             // never echo it back to the client.
@@ -324,13 +364,16 @@ class FundController
         CacheKeyService::clearFunds($festival);
 
         $statusStr = $handover->status instanceof \BackedEnum ? $handover->status->value : (string) $handover->status;
+        $roles = $this->mandalRolesByUser($festivalModel, [$handover->from_user_id, $handover->to_user_id]);
 
         return $this->success([
             'id' => $handover->id,
             'fromName' => $handover->fromUser?->full_name ?? ($validated['fromName'] ?? 'Collector'),
-            'fromRole' => $validated['fromRole'] ?? 'Collector',
+            'fromUserId' => $handover->from_user_id,
+            'fromRole' => $roles[$handover->from_user_id] ?? ($validated['fromRole'] ?? 'COLLECTOR'),
             'toName' => $handover->toUser?->full_name ?? ($validated['toName'] ?? 'Treasurer'),
-            'toRole' => $validated['toRole'] ?? 'Treasurer',
+            'toUserId' => $handover->to_user_id,
+            'toRole' => $roles[$handover->to_user_id] ?? ($validated['toRole'] ?? 'TREASURER'),
             'amount' => (float) $handover->amount,
             'status' => $statusStr,
             'linkedEntriesCount' => $linkedCount,
@@ -354,15 +397,16 @@ class FundController
         $this->checkTreasurerOrAdmin($handoverModel->festival);
 
         $statusStr = $handoverModel->status instanceof \BackedEnum ? $handoverModel->status->value : (string) $handoverModel->status;
+        $roles = $this->mandalRolesByUser($handoverModel->festival, [$handoverModel->from_user_id, $handoverModel->to_user_id]);
 
         return $this->success([
             'id' => $handoverModel->id,
             'fromName' => $handoverModel->fromUser?->full_name ?? 'Collector',
-            'fromRole' => 'Collector',
+            'fromRole' => $roles[$handoverModel->from_user_id] ?? 'COLLECTOR',
             'fromUser' => $handoverModel->fromUser?->full_name,
             'fromUserId' => $handoverModel->from_user_id,
             'toName' => $handoverModel->toUser?->full_name ?? 'Treasurer',
-            'toRole' => 'Treasurer',
+            'toRole' => $roles[$handoverModel->to_user_id] ?? 'TREASURER',
             'toUser' => $handoverModel->toUser?->full_name,
             'toUserId' => $handoverModel->to_user_id,
             'amount' => (float) $handoverModel->amount,

@@ -136,6 +136,7 @@ class MemberController
                 return [
                     'id' => $mm->id,
                     'membershipId' => $mm->id,
+                    'userId' => $mm->user_id,
                     'name' => $mm->user->full_name ?? null,
                     'fullName' => $mm->user->full_name ?? null,
                     'initials' => $mm->user?->initials ?? '',
@@ -213,6 +214,7 @@ class MemberController
         return $this->success([
             'id' => $memberRecord->id,
             'membershipId' => $memberRecord->id,
+            'userId' => $memberRecord->user_id,
             'name' => $memberRecord->user->full_name ?? null,
             'fullName' => $memberRecord->user->full_name ?? null,
             'initials' => $memberRecord->user?->initials ?? '',

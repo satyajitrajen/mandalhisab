@@ -73,6 +73,8 @@ class DomainNotificationTest extends TestCase
     {
         $collector = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
         $treasurer = $this->makeTreasurerOf($collector);
+        $this->collectCash($collector, $collector['user'], 4000);
+        Notification::query()->delete();
 
         $this->withHeaders($this->authHeaders($collector['user']))
             ->postJson('/api/v1/festivals/'.$collector['festival']->id.'/funds/handovers', [

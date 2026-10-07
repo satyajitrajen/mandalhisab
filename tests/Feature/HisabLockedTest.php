@@ -119,6 +119,8 @@ class HisabLockedTest extends TestCase
     public function test_handover_submit_allowed_when_not_locked(): void
     {
         $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $this->makeTreasurerOf($ctx);
+        $this->collectCash($ctx, $ctx['user'], 5000);
 
         $this->withHeaders($this->authHeaders($ctx['user']))
             ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers', [

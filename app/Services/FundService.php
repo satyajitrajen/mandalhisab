@@ -67,22 +67,110 @@ class FundService
      */
     public function createHandover(string $festivalId, array $data, string $fromUserId): CashHandover
     {
-        $handover = DB::transaction(function () use ($festivalId, $data, $fromUserId) {
+        // A retried or double-submitted request resends the same clientUuid;
+        // return the original handover instead of creating a duplicate.
+        $clientUuid = $data['client_uuid'] ?? null;
+        if ($clientUuid) {
+            $existing = $this->findHandoverByClientUuid($festivalId, $clientUuid);
+            if ($existing) {
+                return $existing;
+            }
+        }
+
+        try {
+            $handover = $this->insertHandover($festivalId, $data, $fromUserId);
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+            // Two concurrent requests with the same key: the other one won.
+            $existing = $clientUuid ? $this->findHandoverByClientUuid($festivalId, $clientUuid) : null;
+            if (! $existing) {
+                throw $e;
+            }
+
+            return $existing;
+        }
+
+        $this->notifications->notifyHandoverInitiated($handover);
+
+        return $handover;
+    }
+
+    /**
+     * Cash this user collected that is not yet handed over or awaiting
+     * approval. Pending handovers count, so the same cash can't be
+     * submitted twice.
+     */
+    public function unsubmittedCash(string $festivalId, string $userId): float
+    {
+        $collected = (float) VarganiEntry::where('festival_id', $festivalId)
+            ->where('collector_id', $userId)
+            ->where('is_cancelled', false)
+            ->where('payment_mode', PaymentMode::CASH->value)
+            ->sum('amount');
+
+        $handedOver = (float) CashHandover::where('festival_id', $festivalId)
+            ->where('from_user_id', $userId)
+            ->whereIn('status', [HandoverStatus::PENDING_APPROVAL, HandoverStatus::VERIFIED_ACCEPTED])
+            ->sum('amount');
+
+        return max($collected - $handedOver, 0.0);
+    }
+
+    /**
+     * Older clients send only names, so pick a recipient: a treasurer first,
+     * then an admin, never the person handing the cash over.
+     */
+    private function defaultHandoverRecipient(string $festivalId, string $fromUserId): string
+    {
+        $priority = [\App\Enums\MemberRole::TREASURER, \App\Enums\MemberRole::ADMIN, \App\Enums\MemberRole::SUPER_ADMIN];
+        $festival = Festival::find($festivalId);
+        $candidates = $festival
+            ? \App\Models\MandalMember::where('mandal_id', $festival->mandal_id)
+                ->whereIn('role', $priority)
+                ->where('is_active', true)
+                ->where('user_id', '!=', $fromUserId)
+                ->orderBy('joined_at')
+                ->get()
+            : collect();
+
+        foreach ($priority as $role) {
+            $match = $candidates->first(fn ($m) => $m->role === $role);
+            if ($match) {
+                return $match->user_id;
+            }
+        }
+
+        throw new \DomainException('No treasurer or admin available to receive this handover');
+    }
+
+    private function findHandoverByClientUuid(string $festivalId, string $clientUuid): ?CashHandover
+    {
+        return CashHandover::where('festival_id', $festivalId)
+            ->where('client_uuid', $clientUuid)
+            ->first();
+    }
+
+    private function insertHandover(string $festivalId, array $data, string $fromUserId): CashHandover
+    {
+        return DB::transaction(function () use ($festivalId, $data, $fromUserId) {
+            // Serialise submissions per festival so two requests cannot both
+            // pass the cash check below and hand over the same cash twice.
+            FestivalBalance::where('festival_id', $festivalId)->lockForUpdate()->first();
+
+            $available = $this->unsubmittedCash($festivalId, $fromUserId);
+            if ((float) $data['amount'] > $available + 0.001) {
+                throw new \DomainException($available <= 0
+                    ? 'You have no cash collections left to hand over'
+                    : 'You can hand over at most ₹'.number_format($available, 2).' (cash collected but not yet handed over)');
+            }
+
             $toUserId = $data['to_user_id'] ?? null;
             if (! $toUserId) {
-                $festival = Festival::find($festivalId);
-                if ($festival) {
-                    $treasurer = \App\Models\MandalMember::where('mandal_id', $festival->mandal_id)
-                        ->whereIn('role', [\App\Enums\MemberRole::TREASURER, \App\Enums\MemberRole::ADMIN, \App\Enums\MemberRole::SUPER_ADMIN])
-                        ->where('is_active', true)
-                        ->first();
-                    $toUserId = $treasurer?->user_id;
-                }
-                $toUserId = $toUserId ?? $fromUserId;
+                $toUserId = $this->defaultHandoverRecipient($festivalId, $fromUserId);
             }
 
             $handover = CashHandover::create([
                 'festival_id' => $festivalId,
+                'client_uuid' => $data['client_uuid'] ?? null,
                 'from_user_id' => $fromUserId,
                 'to_user_id' => $toUserId,
                 'amount' => $data['amount'],
@@ -96,10 +184,6 @@ class FundService
 
             return $handover;
         });
-
-        $this->notifications->notifyHandoverInitiated($handover);
-
-        return $handover;
     }
 
     /**

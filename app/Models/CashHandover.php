@@ -18,6 +18,7 @@ class CashHandover extends Model
     protected $fillable = [
         'id',
         'festival_id',
+        'client_uuid',
         'from_user_id',
         'to_user_id',
         'amount',

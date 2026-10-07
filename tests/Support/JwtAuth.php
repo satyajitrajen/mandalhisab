@@ -20,6 +20,22 @@ trait JwtAuth
     /**
      * Add a treasurer member to an existing festival context.
      */
+    /**
+     * Record a cash vargani collected by $user, so they have cash to hand over.
+     */
+    protected function collectCash(array $context, User $user, float $amount): void
+    {
+        $this->withHeaders($this->authHeaders($user))
+            ->postJson('/api/v1/festivals/' . $context['festival']->id . '/vargani', [
+                'donorName' => 'Cash Donor',
+                'amount' => $amount,
+                'paymentMode' => 'CASH',
+                'area' => 'Area 1',
+                'receiptType' => 'DIGITAL',
+            ])
+            ->assertStatus(201);
+    }
+
     protected function makeTreasurerOf(array $context): User
     {
         $treasurer = User::factory()->create();

@@ -89,6 +89,182 @@ class FundContractTest extends TestCase
             ->assertStatus(403);
     }
 
+    public function test_store_handover_is_idempotent_on_client_uuid(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $this->makeTreasurerOf($ctx);
+        $this->collectCash($ctx, $ctx['user'], 5600);
+        $url = '/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers';
+        $payload = ['amount' => 2800, 'clientUuid' => 'handover-retry-1'];
+
+        $first = $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($url, $payload)
+            ->assertStatus(201);
+
+        // A replayed submission (timeout retry, double tap) returns the original row.
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($url, $payload)
+            ->assertStatus(201)
+            ->assertJsonPath('data.id', $first->json('data.id'));
+
+        $this->assertSame(1, CashHandover::where('festival_id', $ctx['festival']->id)->count());
+
+        // A different key is a genuinely new handover.
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($url, ['amount' => 2800, 'clientUuid' => 'handover-retry-2'])
+            ->assertStatus(201);
+
+        $this->assertSame(2, CashHandover::where('festival_id', $ctx['festival']->id)->count());
+    }
+
+    public function test_store_handover_rejects_handing_over_to_yourself(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::ADMIN->value);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers', [
+                'amount' => 500,
+                'toUserId' => $ctx['user']->id,
+            ])
+            ->assertStatus(422);
+
+        $this->assertSame(0, CashHandover::count());
+    }
+
+    public function test_store_handover_default_recipient_is_never_the_sender(): void
+    {
+        // The sender is an admin who joined first; the old fallback picked
+        // the first admin/treasurer row, which was the sender themselves.
+        $ctx = $this->makeFestivalContext(MemberRole::ADMIN->value);
+        $treasurer = $this->makeTreasurerOf($ctx);
+        $this->collectCash($ctx, $ctx['user'], 500);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers', [
+                'amount' => 500,
+                'toName' => 'Treasurer',
+            ])
+            ->assertStatus(201);
+
+        $this->assertDatabaseHas('cash_handovers', [
+            'from_user_id' => $ctx['user']->id,
+            'to_user_id' => $treasurer->id,
+        ]);
+    }
+
+    public function test_store_handover_fails_when_no_one_else_can_receive(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::ADMIN->value);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers', [
+                'amount' => 500,
+            ])
+            ->assertStatus(422);
+
+        $this->assertSame(0, CashHandover::count());
+    }
+
+    public function test_member_list_exposes_user_id(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::ADMIN->value);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->getJson('/api/v1/mandals/' . $ctx['mandal']->id . '/members')
+            ->assertStatus(200)
+            ->assertJsonPath('data.0.userId', $ctx['user']->id);
+    }
+
+    public function test_store_handover_checks_pin_when_submitter_has_one(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::ADMIN->value);
+        $this->makeTreasurerOf($ctx);
+        $ctx['user']->forceFill(['security_pin' => Hash::make('1234')])->save();
+        $this->collectCash($ctx, $ctx['user'], 500);
+        $url = '/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers';
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($url, ['amount' => 500])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'PIN_REQUIRED');
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($url, ['amount' => 500, 'pin' => '9999'])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'INVALID_PIN');
+
+        $this->assertSame(0, CashHandover::count());
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($url, ['amount' => 500, 'pin' => '1234'])
+            ->assertStatus(201);
+    }
+
+    public function test_store_handover_without_pin_allowed_for_collector_with_no_pin(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $this->makeTreasurerOf($ctx);
+        $this->collectCash($ctx, $ctx['user'], 500);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers', ['amount' => 500])
+            ->assertStatus(201);
+    }
+
+    public function test_handover_responses_use_real_mandal_roles(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::ADMIN->value);
+        $treasurer = $this->makeTreasurerOf($ctx);
+        $this->collectCash($ctx, $ctx['user'], 500);
+
+        $created = $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers', [
+                'amount' => 500,
+                'toUserId' => $treasurer->id,
+            ])
+            ->assertStatus(201)
+            ->assertJsonPath('data.fromRole', 'ADMIN')
+            ->assertJsonPath('data.toRole', 'TREASURER');
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->getJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers')
+            ->assertStatus(200)
+            ->assertJsonPath('data.0.fromRole', 'ADMIN')
+            ->assertJsonPath('data.0.toRole', 'TREASURER');
+
+        $this->withHeaders($this->authHeaders($ctx['user'], ['X-Festival-Id' => $ctx['festival']->id]))
+            ->getJson('/api/v1/funds/handovers/' . $created->json('data.id'))
+            ->assertStatus(200)
+            ->assertJsonPath('data.fromRole', 'ADMIN')
+            ->assertJsonPath('data.toRole', 'TREASURER');
+    }
+
+    public function test_store_handover_cannot_exceed_unsubmitted_cash(): void
+    {
+        $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $this->makeTreasurerOf($ctx);
+        $this->collectCash($ctx, $ctx['user'], 2800);
+        $url = '/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers';
+
+        // More than collected.
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($url, ['amount' => 3000])
+            ->assertStatus(422);
+
+        // All of it: accepted.
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($url, ['amount' => 2800])
+            ->assertStatus(201);
+
+        // A second handover of the same cash while the first is pending: refused.
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->postJson($url, ['amount' => 2800])
+            ->assertStatus(422)
+            ->assertJsonPath('error.message', 'You have no cash collections left to hand over');
+
+        $this->assertSame(1, CashHandover::where('from_user_id', $ctx['user']->id)->count());
+    }
+
     public function test_bank_accounts_index_store_update(): void
     {
         $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
@@ -284,6 +460,8 @@ class FundContractTest extends TestCase
     public function test_handover_submit_rejects_parties_outside_mandal(): void
     {
         $ctx = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $this->makeTreasurerOf($ctx);
+        $this->collectCash($ctx, $ctx['user'], 1000);
         $outsider = \App\Models\User::factory()->create();
 
         $url = '/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers';
@@ -343,29 +521,20 @@ class FundContractTest extends TestCase
             'joined_at' => now(),
         ]);
 
-        $handoverId = $this->withHeaders($this->authHeaders($broke))
+        // Refused at submit time: there is no cash of theirs to hand over.
+        $this->withHeaders($this->authHeaders($broke))
             ->postJson('/api/v1/festivals/' . $ctx['festival']->id . '/funds/handovers', [
                 'amount' => 500,
             ])
-            ->assertStatus(201)
-            ->json('data.id');
-
-        $this->withHeaders($this->authHeaders($treasurer, ['X-Festival-Id' => $ctx['festival']->id]))
-            ->postJson('/api/v1/funds/handovers/' . $handoverId . '/verify', [
-                'status' => 'VERIFIED_ACCEPTED',
-                'pin' => '1234',
-            ])
             ->assertStatus(422)
             ->assertJsonPath('error.code', 'VALIDATION_FAILED');
+
+        $this->assertSame(0, CashHandover::where('from_user_id', $broke->id)->count());
 
         // Pool untouched — the pooled 1000 belongs to the first collector.
         $balance = FestivalBalance::where('festival_id', $ctx['festival']->id)->first();
         $this->assertEquals(1000, (float) $balance->cash_collectors);
         $this->assertEquals(0, (float) $balance->cash_treasurer);
-        $this->assertDatabaseHas('cash_handovers', [
-            'id' => $handoverId,
-            'status' => HandoverStatus::PENDING_APPROVAL->value,
-        ]);
 
         // The collector who actually holds the cash can still hand over.
         $ownId = $this->withHeaders($this->authHeaders($ctx['user']))

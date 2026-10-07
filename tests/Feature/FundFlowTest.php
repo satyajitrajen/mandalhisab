@@ -21,10 +21,13 @@ class FundFlowTest extends TestCase
 public function test_handover_submit_does_not_move_balances(): void
     {
         $collector = $this->makeFestivalContext(MemberRole::COLLECTOR->value);
+        $this->makeTreasurerOf($collector);
+        $this->collectCash($collector, $collector['user'], 4000);
 
         $balance = FestivalBalance::where('festival_id', $collector['festival']->id)->first();
         $balance->cash_collectors = 10000;
         $balance->save();
+        $trailBefore = \App\Models\MoneyTrailEntry::count();
 
         $this->withHeaders($this->authHeaders($collector['user']))
             ->postJson('/api/v1/festivals/' . $collector['festival']->id . '/funds/handovers', [
@@ -38,8 +41,8 @@ public function test_handover_submit_does_not_move_balances(): void
             'status' => HandoverStatus::PENDING_APPROVAL->value,
         ]);
 
-        // Cash remains with collectors — no trail entry yet
-        $this->assertDatabaseCount('money_trail_entries', 0);
+        // Cash remains with collectors — no new trail entry yet
+        $this->assertSame($trailBefore, \App\Models\MoneyTrailEntry::count());
 
         $balance->refresh();
         $this->assertEquals(10000, (float) $balance->cash_collectors);
