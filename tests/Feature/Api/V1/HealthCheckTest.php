@@ -32,6 +32,11 @@ class HealthCheckTest extends TestCase
                         'registrationAmountPaise',
                         'currency',
                     ],
+                    'appleIap' => [
+                        'enabled',
+                        'productId',
+                        'environment',
+                    ],
                     'fcm' => [
                         'enabled',
                         'projectId',

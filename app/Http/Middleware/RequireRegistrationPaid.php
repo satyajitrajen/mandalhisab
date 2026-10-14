@@ -13,7 +13,7 @@ class RequireRegistrationPaid
     use ApiResponse;
 
     /**
-     * Block festival/mandal business APIs until the mandal registration fee is paid.
+     * Block festival/mandal business APIs unless the yearly registration is current.
      * Auth, payments, and mandal list/create stay allowed.
      */
     public function handle(Request $request, Closure $next): Response
@@ -28,11 +28,16 @@ class RequireRegistrationPaid
         }
 
         $mandal = $membership->mandal ?? $membership->mandal()->first();
-        if ($mandal && $mandal->registration_paid_at === null) {
+        if ($mandal && ! $mandal->isRegistrationActive()) {
+            $paidThrough = $mandal->registration_paid_through?->toDateString();
+
             return $this->error(
                 'PAYMENT_REQUIRED',
-                'Mandal registration fee of '.PaymentService::amountLabel().' is unpaid',
-                402
+                $paidThrough
+                    ? 'Mandal registration expired on '.$paidThrough.'. Renew for '.PaymentService::amountLabel().'/year'
+                    : 'Mandal registration fee of '.PaymentService::amountLabel().'/year is unpaid',
+                402,
+                ['mandalId' => $mandal->id, 'paidThrough' => $paidThrough, 'expired' => $paidThrough !== null]
             );
         }
 

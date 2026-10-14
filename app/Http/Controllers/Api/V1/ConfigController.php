@@ -53,6 +53,11 @@ class ConfigController
                 'registrationAmountPaise' => (int) config('services.razorpay.registration_amount_paise', 10100),
                 'currency' => config('services.razorpay.currency', 'INR'),
             ],
+            'appleIap' => [
+                'enabled' => app(\App\Services\AppleGateway::class)->isConfigured(),
+                'productId' => config('services.apple_iap.product_id'),
+                'environment' => config('services.apple_iap.environment', 'sandbox'),
+            ],
             'fcm' => [
                 'enabled' => (bool) filter_var(config('services.fcm.enabled', false), FILTER_VALIDATE_BOOLEAN),
                 'projectId' => config('services.fcm.project_id'),

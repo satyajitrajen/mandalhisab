@@ -41,6 +41,8 @@ class RouteCoverageTest extends TestCase
         // --- Payments (2) ---
         'POST api/v1/payments/create-order' => 'Tests\Feature\ApiCoverage\PaymentContractTest',
         'POST api/v1/payments/verify' => 'Tests\Feature\ApiCoverage\PaymentContractTest',
+        'POST api/v1/payments/apple/verify' => 'Tests\Feature\ApiCoverage\ApplePaymentContractTest',
+        'POST api/v1/payments/apple/webhook' => 'Tests\Feature\ApiCoverage\ApplePaymentContractTest',
 
         // --- Mandals (5) ---
         'GET api/v1/mandals' => 'Tests\Feature\ApiCoverage\MandalFestivalContractTest',
@@ -142,7 +144,7 @@ class RouteCoverageTest extends TestCase
             return str_starts_with($route->uri(), 'api/v1/');
         });
 
-        $this->assertGreaterThanOrEqual(70, $apiRoutes->count(), 'Expected at least 70 api/v1 routes');
+        $this->assertGreaterThanOrEqual(72, $apiRoutes->count(), 'Expected at least 72 api/v1 routes');
 
         $uncovered = [];
         foreach ($apiRoutes as $route) {
