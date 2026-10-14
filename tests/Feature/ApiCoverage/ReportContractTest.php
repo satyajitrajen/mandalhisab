@@ -2,7 +2,10 @@
 
 namespace Tests\Feature\ApiCoverage;
 
+use App\Enums\ExpenseStatus;
 use App\Enums\MemberRole;
+use App\Enums\PaymentMode;
+use App\Models\ExpenseEntry;
 use App\Models\FinalHisabAudit;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\JwtAuth;
@@ -23,6 +26,32 @@ class ReportContractTest extends TestCase
             ->assertJsonStructure([
                 'data' => ['totalVargani', 'totalExpenses', 'totalOtherIncome', 'netBalance', 'totalDonors', 'totalReceipts', 'totalCash', 'totalUPI', 'totalBank', 'expenseByCategory', 'dailyCollection', 'dailyExpenses'],
             ]);
+    }
+
+    public function test_overview_daily_expenses_use_plain_dates(): void
+    {
+        config(['app.timezone' => 'Asia/Kolkata']);
+        date_default_timezone_set('Asia/Kolkata');
+        $ctx = $this->makeFestivalContext(MemberRole::TREASURER->value);
+        $day = now()->subDays(2)->toDateString();
+
+        ExpenseEntry::create([
+            'festival_id' => $ctx['festival']->id,
+            'title' => 'Mandap',
+            'category' => 'STAGE_MANDAP',
+            'amount' => 18000,
+            'payment_mode' => PaymentMode::UPI,
+            'paid_to' => 'Sai Decorators',
+            'date' => $day,
+            'status' => ExpenseStatus::PAID,
+            'created_by_user_id' => $ctx['user']->id,
+        ]);
+
+        $this->withHeaders($this->authHeaders($ctx['user']))
+            ->getJson('/api/v1/festivals/' . $ctx['festival']->id . '/reports/overview')
+            ->assertStatus(200)
+            ->assertJsonPath('data.dailyExpenses.0.date', $day)
+            ->assertJsonPath('data.dailyExpenses.0.total', 18000);
     }
 
     public function test_overview_denied_for_collector(): void
