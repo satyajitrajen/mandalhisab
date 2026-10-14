@@ -16,6 +16,7 @@ use App\Services\NotificationService;
 use App\Traits\ApiResponse;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\View;
@@ -142,7 +143,10 @@ class ReportController
                 ->orderBy('date')
                 ->get()
                 ->map(fn ($row) => [
-                    'date' => $row->date,
+                    // Plain calendar date like dailyCollection; the model's date
+                    // cast would otherwise serialise as a UTC timestamp, which
+                    // shifts IST dates back a day.
+                    'date' => Carbon::parse($row->date)->toDateString(),
                     'total' => (float) $row->total,
                 ]);
 
