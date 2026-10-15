@@ -28,3 +28,6 @@ test_softdelete.php
 *.log
 .env*
 .commandcode/
+
+# Flutter app (separate repo: satyajitrajen/mandalhisab-flutter)
+/mobileapp/

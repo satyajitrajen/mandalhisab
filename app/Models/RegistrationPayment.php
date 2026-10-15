@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\PaymentGateway;
 use App\Enums\RegistrationPaymentStatus;
 use App\Traits\HasPrefixedId;
 use Illuminate\Database\Eloquent\Model;
@@ -20,18 +21,30 @@ class RegistrationPayment extends Model
         'id',
         'mandal_id',
         'user_id',
+        'gateway',
         'razorpay_order_id',
         'razorpay_payment_id',
+        'apple_transaction_id',
+        'apple_original_transaction_id',
         'amount_paise',
         'currency',
         'status',
         'paid_at',
+        'period_start',
+        'period_end',
     ];
 
     protected $casts = [
+        'gateway' => PaymentGateway::class,
         'status' => RegistrationPaymentStatus::class,
         'amount_paise' => 'integer',
         'paid_at' => 'datetime',
+        'period_start' => 'date',
+        'period_end' => 'date',
+    ];
+
+    protected $attributes = [
+        'gateway' => 'razorpay',
     ];
 
     public function getIdPrefix(): string

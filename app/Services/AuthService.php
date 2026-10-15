@@ -419,8 +419,11 @@ class AuthService
             return $mm->is_active
                 && in_array($mm->role, [MemberRole::ADMIN, MemberRole::SUPER_ADMIN], true)
                 && $mm->mandal
-                && $mm->mandal->registration_paid_at === null;
+                && ! $mm->mandal->isRegistrationActive();
         });
+
+        $defaultMembership = $user->mandalMembers->firstWhere('is_default', true)
+            ?? $user->mandalMembers->first();
 
         $deletionService = app(AccountDeletionService::class);
         $pendingDeletion = $deletionService->formatPending($deletionService->pendingFor($user));
@@ -437,6 +440,7 @@ class AuthService
             'activeFestivalId' => $user->active_festival_id,
             'accountDeletion' => $pendingDeletion,
             'registrationPaymentRequired' => $unpaidAdmin !== null,
+            'registrationPaidThrough' => $defaultMembership?->mandal?->registration_paid_through?->toDateString(),
             'unpaidMandal' => $unpaidAdmin ? [
                 'id' => $unpaidAdmin->mandal_id,
                 'name' => $unpaidAdmin->mandal->name ?? null,
@@ -446,7 +450,9 @@ class AuthService
                 'name' => $mm->mandal->name ?? null,
                 'role' => $mm->role->value,
                 'isDefault' => $mm->is_default,
-                'registrationPaid' => $mm->mandal?->registration_paid_at !== null,
+                'registrationPaid' => (bool) $mm->mandal?->isRegistrationActive(),
+                'registrationPaidThrough' => $mm->mandal?->registration_paid_through?->toDateString(),
+                'registrationRenewable' => (bool) ($mm->mandal?->isRegistrationActive() && $mm->mandal->needsRegistrationPayment()),
             ])->toArray(),
         ];
     }

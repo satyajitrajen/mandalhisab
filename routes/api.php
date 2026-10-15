@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\V1\ApplePaymentController;
 use App\Http\Controllers\Api\V1\AppUpdateController;
 use App\Http\Controllers\Api\V1\AreaController;
 use App\Http\Controllers\Api\V1\AuthController;
@@ -36,6 +37,9 @@ Route::prefix('v1')->group(function () {
     Route::get('public/receipts/{receiptId}', [VarganiController::class, 'publicReceipt'])->middleware('rate.limit');
     Route::post('public/account-deletion-request', [AuthController::class, 'publicAccountDeletionRequest']);
 
+    // App Store Server Notifications V2 (Apple cannot send a JWT)
+    Route::post('payments/apple/webhook', [ApplePaymentController::class, 'webhook'])->middleware('rate.limit');
+
     // Auth (public, rate-limited 5/min/IP via rate.limit)
     Route::middleware('rate.limit')->group(function () {
         Route::post('auth/register', [AuthController::class, 'register']);
@@ -49,6 +53,7 @@ Route::prefix('v1')->group(function () {
     Route::middleware(['jwt.auth', 'tenant.scope', 'rate.limit'])->group(function () {
         Route::post('payments/create-order', [PaymentController::class, 'createOrder']);
         Route::post('payments/verify', [PaymentController::class, 'verify']);
+        Route::post('payments/apple/verify', [ApplePaymentController::class, 'verify']);
     });
 
     // Protected

@@ -33,6 +33,13 @@
         <env name="RAZORPAY_KEY_SECRET" value="test_secret"/>
         <env name="RAZORPAY_REGISTRATION_AMOUNT_PAISE" value="10100"/>
         <env name="RAZORPAY_CURRENCY" value="INR"/>
+        <env name="APPLE_IAP_ENABLED" value="true"/>
+        <env name="APPLE_IAP_ENVIRONMENT" value="sandbox"/>
+        <env name="APPLE_IAP_BUNDLE_ID" value="in.mandalhisab.app"/>
+        <env name="APPLE_IAP_ISSUER_ID" value="test-issuer"/>
+        <env name="APPLE_IAP_KEY_ID" value="TESTKEY123"/>
+        <env name="APPLE_IAP_PRIVATE_KEY_PATH" value="storage/app/apple-test.p8"/>
+        <env name="APPLE_IAP_PRODUCT_ID" value="mandal.registration.yearly"/>
         <env name="FIREBASE_ENABLED" value="false"/>
     </php>
 </phpunit>

@@ -42,6 +42,18 @@ return [
         'key_secret' => env('RAZORPAY_KEY_SECRET'),
         'registration_amount_paise' => (int) env('RAZORPAY_REGISTRATION_AMOUNT_PAISE', 10100),
         'currency' => env('RAZORPAY_CURRENCY', 'INR'),
+        'renewal_window_days' => (int) env('REGISTRATION_RENEWAL_WINDOW_DAYS', 30),
+    ],
+
+    'apple_iap' => [
+        'enabled' => env('APPLE_IAP_ENABLED', false),
+        'environment' => env('APPLE_IAP_ENVIRONMENT', 'sandbox'),
+        'bundle_id' => env('APPLE_IAP_BUNDLE_ID'),
+        'issuer_id' => env('APPLE_IAP_ISSUER_ID'),
+        'key_id' => env('APPLE_IAP_KEY_ID'),
+        // .p8 key from App Store Connect; keep it outside the repo.
+        'private_key_path' => env('APPLE_IAP_PRIVATE_KEY_PATH'),
+        'product_id' => env('APPLE_IAP_PRODUCT_ID', 'mandal.registration.yearly'),
     ],
 
 ];

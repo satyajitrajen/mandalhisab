@@ -8,6 +8,7 @@
         "php": "^8.2",
         "barryvdh/laravel-dompdf": "^3.0",
         "darkaonline/l5-swagger": "^11.1",
+        "firebase/php-jwt": "^7.1",
         "kreait/laravel-firebase": "^5.9",
         "laravel/framework": "^11.0",
         "laravel/tinker": "^2.9",

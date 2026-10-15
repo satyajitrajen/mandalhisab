@@ -35,7 +35,31 @@ class Mandal extends Model
     protected $casts = [
         'established_year' => 'integer',
         'registration_paid_at' => 'datetime',
+        'registration_paid_through' => 'date',
     ];
+
+    /**
+     * Registration is active through the end of the paid-through date.
+     */
+    public function isRegistrationActive(): bool
+    {
+        return $this->registration_paid_through !== null
+            && $this->registration_paid_through->gte(today());
+    }
+
+    /**
+     * Expired, never paid, or inside the final renewal window.
+     */
+    public function needsRegistrationPayment(): bool
+    {
+        if (! $this->isRegistrationActive()) {
+            return true;
+        }
+
+        $window = (int) config('services.razorpay.renewal_window_days', 30);
+
+        return $this->registration_paid_through->lt(today()->addDays($window));
+    }
 
     public function getIdPrefix(): string
     {
